@@ -53,7 +53,9 @@ namespace MinDayProcessNS
 
     public class MinDayProcess
         {
-        public const Int16 MINDAYCREDIT = 210;
+        public Int16 MINDAYCREDIT;
+        public const Int16 MINDAYCREDIT35HR = 210;
+        public const Int16 MINDAYCREDIT4HR = 240;
         public event PairingProcessDelegate PairingProcess;
         public event MinDayStatusDelegate StatusUpdate;
         CTPMTimestamps pmtss;
@@ -184,6 +186,13 @@ namespace MinDayProcessNS
             {
             SavePMUserSettings(pmts.Update_Date,pmts.Update_Time.ToString());
             bool Bypassed = false;
+
+            // Min day value is based on start date of pairing. New value used for prgs starting 9/1/2022. Set before doing anything else with the prg.
+            if (string.Compare(pmts.PairingDate, "20220901") >= 0)
+                MINDAYCREDIT = MINDAYCREDIT4HR;
+            else
+                MINDAYCREDIT = MINDAYCREDIT35HR;
+
 
             List<ModDuty> ModDutiesList = new List<ModDuty>();
 
@@ -357,14 +366,20 @@ namespace MinDayProcessNS
 
         private bool Bypass1CrewPairing(PMByTimestamp pmts)
             {
-            if ((pmts.PilotCount+pmts.FACount == 1) && (pmts.AbsenceCode != null || pmts.AssignCode == "RAS" || pmts.AssignCode == "TTA"))
+            if (MINDAYCREDIT == MINDAYCREDIT35HR && (pmts.PilotCount + pmts.FACount == 1) && (pmts.AbsenceCode != null || pmts.AssignCode == "RAS" || pmts.AssignCode == "TTA"))
                 {
                 UpdateStatus(MinDayStatus.Info, "1-crew ab/RAS/TTA pairing bypassed");
+                return true;
+                }
+            if (MINDAYCREDIT == MINDAYCREDIT4HR && (pmts.PilotCount + pmts.FACount == 1) && pmts.AssignCode == "RAS")
+                {
+                UpdateStatus(MinDayStatus.Info, "1-crew RAS pairing bypassed");
                 return true;
                 }
             return false;
             }
 
+        // DOESN"T SEEM TO BE USED
         // this routine works but last if in the create px if needed routine is simpler
         private bool BypassIfNeeded(PMByTimestamp pmts)
             {
@@ -389,22 +404,47 @@ namespace MinDayProcessNS
                 return true;
                 }
                 */
-
+                 
             // if pairing is assigned to one or more crew and has ab/RAS/TTA *AND* if pairing is assigned to one or more crew without ab/RAS/TTA, make a PX
-            if (pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA")) 
+            if (MINDAYCREDIT == MINDAYCREDIT35HR && 
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && 
+                              (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA")) 
                                && 
-                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && (w.AbsenceCode == null && w.AssignCode != "RAS" && w.AssignCode != "TTA")))
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && 
+                              (w.AbsenceCode == null && w.AssignCode != "RAS" && w.AssignCode != "TTA")))
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "PX due to mixed ab/RAS/TTA crew");
                 CreatePX(pmts);
                 return true;
                 }
 
+            // if pairing is assigned to one or more crew and has RAS *AND* if pairing is assigned to one or more crew without RAS, make a PX
+            if (MINDAYCREDIT == MINDAYCREDIT4HR && 
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && 
+                               w.PairingDate == pmts.PairingDate && w.AssignCode == "RAS")
+                               &&
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && 
+                               w.PairingDate == pmts.PairingDate && w.AssignCode != "RAS"))
+                {
+                UpdateStatus(MinDayStatus.DetailedInfo, "PX due to mixed RAS crew");
+                CreatePX(pmts);
+                return true;
+                }
+
             // if we reach here we don't need a px because there is not a mix of pilots assigned with and without ab/RAS/TTA. Only have assigned pilots + possibly open. 
             // either way, skip processing
-            if (pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA")))
+            if (MINDAYCREDIT == MINDAYCREDIT35HR && 
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && 
+                              (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA")))
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "Pairing bypassed due to all crew ab/RAS/TTA");
+                return true;
+                }
+            if (MINDAYCREDIT == MINDAYCREDIT4HR && 
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && 
+                               w.AssignCode == "RAS"))
+                {
+                UpdateStatus(MinDayStatus.DetailedInfo, "Pairing bypassed due to all crew RAS");
                 return true;
                 }
 
@@ -436,7 +476,7 @@ namespace MinDayProcessNS
             List<ModDuty> ModDutyList = new List<ModDuty>();
 
             // special check for 1-duty trips
-            if (pdList.Count() == 1)
+            if (MINDAYCREDIT == MINDAYCREDIT35HR && pdList.Count() == 1)
                 {
                 if (AreAnyLegsInDutyFakeDeadhead(1) || 
                    (pdList[0].Report.TimeAsMins > 720 && 
@@ -453,9 +493,9 @@ namespace MinDayProcessNS
                     {
                     if (AreAnyLegsInDutyFakeDeadhead(pd.DutyPeriod))
                         continue;
-                    if (pd.DutyPeriod == 1 && pd.Report.TimeAsMins >= 720) // no calc needed if reports after 12:00 local on first day of trip
+                    if (MINDAYCREDIT == MINDAYCREDIT35HR && pd.DutyPeriod == 1 && pd.Report.TimeAsMins >= 720) // no calc needed if reports after 12:00 local on first day of trip (old rules only)
                         continue;
-                    if (pd.DutyPeriod == pdList.Count() && // no calc needed if releases before or equal to 17:00 local on last day of trip
+                    if (MINDAYCREDIT == MINDAYCREDIT35HR && pd.DutyPeriod == pdList.Count() && // no calc needed if releases before or equal to 17:00 local on last day of trip (old rules only)
                         (pd.ActEnd.TimeAsMins <= 1020 && pd.EstEnd.TimeAsMins <= 1020 && pd.SkedEnd.TimeAsMins <= 1020))
                         continue;
 
