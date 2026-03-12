@@ -18,7 +18,7 @@ using System.Runtime.Serialization;
 
 namespace MinDayProcessNS
 {
-
+   public enum PairingProcessAction { EvalupateAndUpdate, EvaluateOnly};
    public enum MinDayStatus { DetailedInfo, Info, Warning, Critical, CriticalStop };
 
    public class PairingProcessInfoEventArgs : EventArgs
@@ -73,6 +73,7 @@ namespace MinDayProcessNS
         String _PMAfterTime;
         String _ABAfterDate;
         String _ABAfterTime;
+        string[] _ExcludeableCodes;
         public SFICTDataAccess.CTDataSetTableAdapters.MSTableAdapter msTableAdapter;
 
         public MinDayProcess()
@@ -91,6 +92,11 @@ namespace MinDayProcessNS
                 ReadSec = CTSecurity.GetSavedSecurityProfile();
                 if (ReadSec.iUserID == 0)
                     throw new Exception("Insufficient security privilege");
+                SFIConfigUtils.AssemblyConfig.SetAppConfig(Assembly.GetExecutingAssembly().Location, Assembly.GetExecutingAssembly().GetName().Name);
+                String ExcludeableCodesToLoadProp;
+                if (!SFIConfigUtils.AssemblyConfig.Settings.TryGetValue("ExcludeableCodes", out ExcludeableCodesToLoadProp))
+                    throw new Exception("ExcludeableCodes not set");
+                _ExcludeableCodes = ExcludeableCodesToLoadProp.Split(';');
                 }
             catch (Exception)
                 {
@@ -98,8 +104,15 @@ namespace MinDayProcessNS
                 }
             }
 
+        public void ListExcludeableCodes()
+            {
+            UpdateStatus(MinDayStatus.DetailedInfo, "Excludeable Codes:");
+            foreach (string code in _ExcludeableCodes)
+                UpdateStatus(MinDayStatus.DetailedInfo, code);
+            }
 
-        public void ProcessPM()
+
+            public void ProcessPM()
             {
             try
                 {
@@ -128,7 +141,7 @@ namespace MinDayProcessNS
                 if (ProccessedPrgs.Processed(pmts))  // no need to process more than once
                     continue;
 
-                if (ProcessPairing(pmts)) // if true, pairing was updated so eval all crew with this pairing on their sked
+                if (ProcessPairing(pmts,PairingProcessAction.EvalupateAndUpdate)) // if true, pairing was updated so eval all crew with this pairing on their sked
                     AddCrewToEvalList(pmts);
                     
                 ProccessedPrgs.List.Add(new ProcessedPairing(pmts.PairingID, pmts.PairingDate));
@@ -182,13 +195,24 @@ namespace MinDayProcessNS
                 ctpes.Insert(abts.PairingID, abts.PairingDate, (uint)ReadSec.iUserID, SFICTDateTimeUtils.CTDateFormat.CTInternal(InsDateTime),(int) InsDateTime.TimeOfDay.TotalMilliseconds);
             } 
 
-        private bool ProcessPairing(PMByTimestamp pmts)
+        private bool ProcessPairing(PMByTimestamp pmts, PairingProcessAction ppAction)
             {
-            SavePMUserSettings(pmts.Update_Date,pmts.Update_Time.ToString());
+            if (ppAction == PairingProcessAction.EvalupateAndUpdate)
+                SavePMUserSettings(pmts.Update_Date,pmts.Update_Time.ToString());
             bool Bypassed = false;
 
-            // Min day value is based on start date of pairing. New value used for prgs starting 9/1/2022. Set before doing anything else with the prg.
-            if (string.Compare(pmts.PairingDate, "20220901") >= 0)
+            // starting on 9/1/2022, mixed pairings no longer allowed
+            if (string.Compare(pmts.PairingDate, "20220901") >= 0 && pmts.PilotCount > 0 && pmts.FACount > 0)
+                {
+                UpdateStatus(MinDayStatus.DetailedInfo, "PX due to mixed pilot/FA crew");
+                prg.Assemble(pmts.PairingID, pmts.PairingDate); // must assemble pairing for exception creation
+                if (ppAction == PairingProcessAction.EvalupateAndUpdate)
+                    CreatePX(pmts);
+                return false; // pairing does not need to be evaluated
+                }
+
+            // Min day value is based on start date of pairing. New value used for pilot prgs starting 9/1/2022. Set before doing anything else with the prg.
+            if (string.Compare(pmts.PairingDate, "20220901") >= 0 && pmts.PilotCount > 0 && pmts.FACount == 0)
                 MINDAYCREDIT = MINDAYCREDIT4HR;
             else
                 MINDAYCREDIT = MINDAYCREDIT35HR;
@@ -205,25 +229,28 @@ namespace MinDayProcessNS
                 int iLineCount = prg.Assemble(pmts.PairingID, pmts.PairingDate);
                 //      UpateStatus(MinDayStatus.DetailedInfo, "Lines in pairing: " + iLineCount.ToString());
                 List<PairingDuty> AllTrueDuties = prg.FindAllDuties();
-
-                List<LayoverModDuty> LayoverDutyList = CalcMultiDayLayoverPay(AllTrueDuties);
+        
+            List<LayoverModDuty> LayoverDutyList = CalcMultiDayLayoverPay(AllTrueDuties);
                 int iLayoverPay = SumOfLayoverPay(LayoverDutyList);
 
                 if ((AllTrueDuties.Count(z => z.ActCredit < MINDAYCREDIT) == 0 && AllTrueDuties.Count(z => z.ActPay < MINDAYCREDIT) == 0) && iLayoverPay == 0)
                     Bypassed = true;
-                else
+                else // prg contains in a min day condition
                     {
                     ModDutiesList = CreateModDutiesList(AllTrueDuties);
                     if (ModDutiesList.Count > 0 || iLayoverPay > 0)
                         {
-                        if (BypassAndCreatePXIfNeeded(pmts) && iLayoverPay == 0)
+                        if (BypassAndCreatePXIfNeeded(pmts,ppAction) && iLayoverPay == 0)
                             Bypassed = true;
                         if (!Bypassed)
                             {
-                            UpdateStatus(MinDayStatus.DetailedInfo, "Update started");
                             try {
-                                prg.UpdateDutyCreditsAndPay(AllTrueDuties, ModDutiesList, MINDAYCREDIT, LayoverDutyList);
-                                UpdateStatus(MinDayStatus.DetailedInfo, "Update completed");
+                                if (ppAction == PairingProcessAction.EvalupateAndUpdate)
+                                    {
+                                    UpdateStatus(MinDayStatus.DetailedInfo, "Update started");
+                                    prg.UpdateDutyCreditsAndPay(AllTrueDuties, ModDutiesList, MINDAYCREDIT, LayoverDutyList, pmts.PilotCount, pmts.FACount);
+                                    UpdateStatus(MinDayStatus.DetailedInfo, "Update completed");
+                                    }
                                 }
                             catch (Exception ee)
                                 {
@@ -264,6 +291,7 @@ namespace MinDayProcessNS
             private List<LayoverModDuty> CalcMultiDayLayoverPay(List<PairingDuty> Duties)
             {
             List<LayoverModDuty> LayoverList = new List<LayoverModDuty>();
+            List<PairingDuty> pdList = prg.FindAllDutiesWithoutCode(Duties, _ExcludeableCodes);
 
             int DutyCount = Duties.Count;
 
@@ -274,6 +302,12 @@ namespace MinDayProcessNS
 
             for (int i = DutyCount - 1; i > 0; i--) // iterate backwards from last duty to first
                 {
+                // if this duty was excluded because of an Excludeable code, don't calc any layover pay either
+                if (pdList.Exists(d => d.DutyPeriod == Duties[i].DutyPeriod))
+                    { }  // ok to process
+                else
+                    continue;
+
                 // find report of subject duty
                 DateTime? DutyReport = Duties[i].Report.AsMSDate;
 
@@ -295,7 +329,6 @@ namespace MinDayProcessNS
 
                     // give min day credit for that duty if meets multiday crtieria
                     if (iSpan > 0)
-
                         LayoverList.Add(new LayoverModDuty(i, true, true, iSpan * MINDAYCREDIT));
                     }
                 }
@@ -392,7 +425,7 @@ namespace MinDayProcessNS
             return false;
             }
 
-        private bool BypassAndCreatePXIfNeeded(PMByTimestamp pmts)
+        private bool BypassAndCreatePXIfNeeded(PMByTimestamp pmts, PairingProcessAction ppAction)
             {
             // px for any FA on a trip with a duty under 3:30
 
@@ -404,6 +437,8 @@ namespace MinDayProcessNS
                 return true;
                 }
                 */
+
+            //
                  
             // if pairing is assigned to one or more crew and has ab/RAS/TTA *AND* if pairing is assigned to one or more crew without ab/RAS/TTA, make a PX
             if (MINDAYCREDIT == MINDAYCREDIT35HR && 
@@ -414,7 +449,8 @@ namespace MinDayProcessNS
                               (w.AbsenceCode == null && w.AssignCode != "RAS" && w.AssignCode != "TTA")))
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "PX due to mixed ab/RAS/TTA crew");
-                CreatePX(pmts);
+                if (ppAction == PairingProcessAction.EvalupateAndUpdate)
+                    CreatePX(pmts);
                 return true;
                 }
 
@@ -471,8 +507,12 @@ namespace MinDayProcessNS
                 }
             }
 
-        private List<ModDuty> CreateModDutiesList(List<PairingDuty> pdList)
+        private List<ModDuty> CreateModDutiesList(List<PairingDuty> pdListComplete)
             {
+            List<PairingDuty> pdList = prg.FindAllDutiesWithoutCode(pdListComplete, _ExcludeableCodes);  // now remove any duties where any leg has the code
+
+            // now remove any duties where a leg has xxx code
+
             List<ModDuty> ModDutyList = new List<ModDuty>();
 
             // special check for 1-duty trips
@@ -491,8 +531,8 @@ namespace MinDayProcessNS
                 {
                 foreach (PairingDuty pd in pdList)
                     {
-                    if (AreAnyLegsInDutyFakeDeadhead(pd.DutyPeriod))
-                        continue;
+            //        if (AreAnyLegsInDutyFakeDeadhead(pd.DutyPeriod))  // removed due to new contract 09/01/2022
+            //            continue;
                     if (MINDAYCREDIT == MINDAYCREDIT35HR && pd.DutyPeriod == 1 && pd.Report.TimeAsMins >= 720) // no calc needed if reports after 12:00 local on first day of trip (old rules only)
                         continue;
                     if (MINDAYCREDIT == MINDAYCREDIT35HR && pd.DutyPeriod == pdList.Count() && // no calc needed if releases before or equal to 17:00 local on last day of trip (old rules only)
@@ -506,7 +546,7 @@ namespace MinDayProcessNS
             return ModDutyList;
             }
 
-        private void AddDutyPeriodToListIfNeeded(List<ModDuty> ModDutyList,PairingDuty pd)
+        private void AddDutyPeriodToListIfNeeded(List<ModDuty> ModDutyList, PairingDuty pd)
             {
             bool IncludeCredit = false;
             bool IncludePay = false;

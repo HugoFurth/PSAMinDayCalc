@@ -1,0 +1,153 @@
+        private bool ProcessPairing(PMByTimestamp pmts)
+            {
+            SaveSettings(pmts.Update_Date,pmts.Update_Time.ToString());
+            bool Bypassed = false;
+
+            List<ModDuty> ModDutiesList = new List<ModDuty>();
+
+            if (Bypass1PilotPairing(pmts))   // can bypass if a single pilot only and meets the bypass criteria
+                Bypassed = true;
+            else
+                {
+                UpateStatus(MinDayStatus.DetailedInfo, "Assembling pairing: " + pmts.PairingID + " " + pmts.PairingDate);
+                int iLineCount = prg.Assemble(pmts.PairingID, pmts.PairingDate);
+                //      UpateStatus(MinDayStatus.DetailedInfo, "Lines in pairing: " + iLineCount.ToString());
+                List<PairingDuty> AllTrueDuties = prg.FindAllDuties();
+                
+                if (AllTrueDuties.Count(z => z.ActCredit < MINDAYCREDIT) == 0 && AllTrueDuties.Count(z => z.ActPay < MINDAYCREDIT) == 0)
+                    Bypassed = true;
+                else
+                    {
+                    ModDutiesList = CreateModDutiesList(AllTrueDuties);
+                    if (ModDutiesList.Count > 0)
+                        {
+                        if (BypassAndCreatePXIfNeeded(pmts))
+                            Bypassed = true;
+                        if (!Bypassed)
+                            {
+                            UpateStatus(MinDayStatus.DetailedInfo, "Update started");
+                            try {
+                                prg.UpdateDutyCredits(AllTrueDuties, ModDutiesList, MINDAYCREDIT);
+                                UpateStatus(MinDayStatus.DetailedInfo, "Update completed");
+                                }
+                            catch (Exception ee)
+                                {
+                                String InnerMess= "";    
+                                if (ee.InnerException != null)
+                                    InnerMess = " / " + ee.InnerException.Message;
+                                UpateStatus(MinDayStatus.Critical, "Update aborted - " + ee.Message + InnerMess);
+                                Bypassed = true;
+                                }
+                            }
+                        }
+                    else
+                        Bypassed = true;
+                    }
+                }
+
+            ReadOnlyCollection<int> ModDutiesIntList = new ReadOnlyCollection<int>(ModDutiesList.ConvertAll(x => x.DutyPeriod));
+   //         ModDutiesIntList = ModDutiesIntList.Distinct().ToList();
+
+            PairingProcessInfoEventArgs Args = new PairingProcessInfoEventArgs(Bypassed, pmts.PairingID, pmts.PairingDate, ModDutiesIntList);
+            OnProcess(Args);
+            return !Bypassed ; // true if sked needs to be evaluated
+            }
+
+
+        private bool Bypass1PilotPairing(PMByTimestamp pmts)
+            {
+            if ((pmts.PilotCount == 1 && pmts.FACount == 0) && (pmts.AbsenceCode != null || pmts.AssignCode == "RAS" || pmts.AssignCode == "TTA"))
+                {
+                UpateStatus(MinDayStatus.Info, "1-pilot ab/RAS/TTA pairing bypassed");
+                return true;
+                }
+            return false;
+            }
+
+			        private bool BypassAndCreatePXIfNeeded(PMByTimestamp pmts)
+            {
+            // px for any FA on a trip with a duty under 3:30
+            if (pmts.FACount > 0)
+                {
+                UpateStatus(MinDayStatus.DetailedInfo, "PX due to FA on pairing");
+                CreatePX(pmts);
+                return true;
+                }
+
+            // if pairing is assigned to one or more crew and has ab/RAS/TTA *AND* if pairing is assigned to one or more crew without ab/RAS/TTA, make a PX
+            if (pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA")) 
+                               && 
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && (w.AbsenceCode == null && w.AssignCode != "RAS" && w.AssignCode != "TTA")))
+                {
+                UpateStatus(MinDayStatus.DetailedInfo, "PX due to mixed ab/RAS/TTA crew");
+                CreatePX(pmts);
+                return true;
+                }
+
+            // if we reach here we don't need a px because there is not a mix of pilots assigned with and without ab/RAS/TTA. Only have assigned pilots + possibly open. 
+            // either way, skip processing
+            if (pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA")))
+                {
+                UpateStatus(MinDayStatus.DetailedInfo, "Pairing bypassed due to all crew ab/RAS/TTA");
+                return true;
+                }
+
+            return false;
+            }
+
+        private List<ModDuty> CreateModDutiesList(List<PairingDuty> pdList)
+            {
+            List<ModDuty> ModDutyList = new List<ModDuty>();
+
+            // special check for 1-duty trips
+            if (pdList.Count() == 1)
+                {
+                if (AreAnyLegsInDutyFakeDeadhead(1) || 
+                   (pdList[0].Report.TimeAsMins > 720 && 
+                   (pdList[0].ActEnd.TimeAsMins < 1020 && pdList[0].EstEnd.TimeAsMins < 1020 && pdList[0].SkedEnd.TimeAsMins < 1020)))
+                    { }  // no min day
+                else
+                    {
+                    AddDutyPeriodToListIfNeeded(ModDutyList,pdList[0]);
+                    }
+                }
+            else // multiple duty trip 
+                {
+                foreach (PairingDuty pd in pdList)
+                    {
+                    if (AreAnyLegsInDutyFakeDeadhead(pd.DutyPeriod))
+                        continue;
+                    if (pd.DutyPeriod == 1 && pd.Report.TimeAsMins >= 720) // no calc needed if reports after 12:00 local on first day of trip
+                        continue;
+                    if (pd.DutyPeriod == pdList.Count() && // no calc needed if releases before or equal to 17:00 local on last day of trip
+                        (pd.ActEnd.TimeAsMins <= 1020 && pd.EstEnd.TimeAsMins <= 1020 && pd.SkedEnd.TimeAsMins <= 1020))
+                        continue;
+
+                    AddDutyPeriodToListIfNeeded(ModDutyList, pd);
+                    }
+                }
+
+            return ModDutyList;
+            }
+
+        private void AddDutyPeriodToListIfNeeded(List<ModDuty> ModDutyList,PairingDuty pd)
+            {
+            bool IncludeCredit = false;
+            bool IncludePay = false;
+            if (pd.ActCredit < MINDAYCREDIT)
+                IncludeCredit = true;
+            if (pd.ActPay < MINDAYCREDIT)
+                IncludePay = true;
+
+            if (IncludeCredit || IncludePay)
+                ModDutyList.Add(new ModDuty(pd.DutyPeriod, IncludeCredit, IncludePay));
+            }
+
+        private bool AreAnyLegsInDutyFakeDeadhead(int ipd)
+            {
+            List<OtherAirlineDeadheadPairingLeg> OADLegs = prg.FindAllOtherAirlineDeadheadLegsByDuty(ipd);
+            int iFakeLegCount = OADLegs.Count(x => x.DeadheadCode == "K");
+            if (iFakeLegCount > 0)
+                return true;
+            return false;
+            }
