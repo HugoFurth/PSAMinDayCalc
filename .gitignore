@@ -1,3 +1,34 @@
+# Backup folders
 CTApp_Backup_*/
 PSAMinDayCalcViewer_Backup_*/
 PSAMinDay_Backup_*/
+
+# Visual Studio metadata
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.v12.suo
+
+# Build outputs
+bin/
+obj/
+
+# NuGet packages
+packages/
+*.nupkg
+
+# Compiled binaries
+*.exe
+*.dll
+*.pdb
+
+# Log and temp files
+*.log
+*.cache
+*.tmp
+
+# Test results
+TestResults/
+*.trx
