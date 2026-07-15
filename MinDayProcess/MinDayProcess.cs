@@ -56,9 +56,9 @@ namespace MinDayProcessNS
         public Int16 MINDAYCREDIT;
         public const Int16 MINDAYCREDIT35HR = 210;
         public const Int16 MINDAYCREDIT4HR = 240;
-        public const uint MARKER_UPDATED = 99901;
-        public const uint MARKER_NO_UPDATE_NEEDED = 99902;
-        public const uint MARKER_EXCEPTION = 99903;
+        public uint MARKER_UPDATED;
+        public uint MARKER_NO_UPDATE_NEEDED;
+        public uint MARKER_EXCEPTION;
         public event PairingProcessDelegate PairingProcess;
         public event MinDayStatusDelegate StatusUpdate;
         CTPMTimestamps pmtss;
@@ -100,6 +100,10 @@ namespace MinDayProcessNS
                 if (!SFIConfigUtils.AssemblyConfig.Settings.TryGetValue("ExcludeableCodes", out ExcludeableCodesToLoadProp))
                     throw new Exception("ExcludeableCodes not set");
                 _ExcludeableCodes = ExcludeableCodesToLoadProp.Split(';');
+
+                MARKER_UPDATED = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerUpdated"));
+                MARKER_NO_UPDATE_NEEDED = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerNoUpdateNeeded"));
+                MARKER_EXCEPTION = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerException"));
                 }
             catch (Exception)
                 {
