@@ -406,9 +406,15 @@ namespace MinDayProcessNS
                     UpdateStatus(MinDayStatus.Info, "Evaluation started for crewmember: " + EmpNum + " for " + MMMYYBP + " (" + iEvalCount.ToString() + "/" + EvalSkeds.Queue.Count().ToString() + ")");
                     bool bEval = EvalMS.EvaluateSked(EmpNum,MMMYYBP);
                     if (bEval)
+                        {
                         UpdateStatus(MinDayStatus.Info, "Evaluated crewmember: " + EmpNum + " for " + MMMYYBP);
+                        MarkMSExaminedSafely(ev, MARKER_UPDATED);
+                        }
                     else
+                        {
                         UpdateStatus(MinDayStatus.Critical, "Error evaluating crewmember: " + EmpNum + " for " + MMMYYBP + "<" + EvalMS.LastErrorMsg + ">");
+                        MarkMSExaminedSafely(ev, MARKER_EXCEPTION);
+                        }
                     }
                 catch (Exception ee)
                     {
@@ -416,9 +422,24 @@ namespace MinDayProcessNS
                     if (ee.InnerException != null)
                         InnerMess = " / " + ee.InnerException.Message;
                     UpdateStatus(MinDayStatus.Critical, "Exception evaluating crewmember <" + ee.Message + InnerMess + ">");
+                    MarkMSExaminedSafely(ev, MARKER_EXCEPTION);
                     }
                 }
 
+            }
+
+        private void MarkMSExaminedSafely(EvaluateSkedParams ev, uint MarkerEmpNo)
+            {
+            try {
+                prg.MarkMSExamined(ev.EmpNum, ev.BidPeriod.BidPeriodValueMember, MarkerEmpNo);
+                }
+            catch (Exception ee)
+                {
+                String InnerMess = "";
+                if (ee.InnerException != null)
+                    InnerMess = " / " + ee.InnerException.Message;
+                UpdateStatus(MinDayStatus.Critical, "Failed to mark MS examined for " + ev.EmpNum + " " + ev.BidPeriod.BidPeriodValueMember + " - " + ee.Message + InnerMess);
+                }
             }
 
         // Bypass1PilotPairing no longer used 
