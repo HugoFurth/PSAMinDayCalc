@@ -162,15 +162,30 @@ existing `UpdatePMActCredit` call — no new key-matching logic invented.
 
 ### Wiring into `ProcessPairing`
 
-- **99901 ("Updated")**: piggybacked as an extra `SET Updateid_Updempno=?`
-  clause directly onto the existing `UpdatePMActCredit` /
-  `UpdatePMActCreditAndTripRig` UPDATE statements in
-  `UpdateDutyCreditsAndPay` — same transaction, atomic with the real
-  credit/pay write. If the credit/pay update commits, the marker commits with
-  it; if it rolls back, no marker is left behind (the exception path below
-  handles that pairing instead).
-- **99902 ("No Update Needed")** and **99903 ("Exception")**: standalone
-  follow-up calls to `MarkPMExamined`, each wrapped in its own try/catch.
+All three markers are wired uniformly, as standalone follow-up calls to
+`MarkPMExamined`, each wrapped in its own try/catch:
+
+- **99901 ("Updated")**: called immediately after `UpdateDutyCreditsAndPay`
+  returns successfully.
+- **99902 ("No Update Needed")** and **99903 ("Exception")**: called at their
+  respective bypass/catch exit points.
+
+**Correction from the original design pass:** 99901 was originally planned to
+be piggybacked as an extra `SET Updateid_Updempno=?` clause directly onto the
+existing `UpdatePMActCredit` / `UpdatePMActCreditAndTripRig` UPDATE statements
+(same transaction, atomic with the credit/pay write). That would require
+hand-editing the auto-generated `CTDataSet.xsd` / `CTDataSet.Designer.cs` in
+the separate `SFICTDataAccess` repo (`D:\data\vs\CTDataAccess`) to add the new
+parameter — the exact fragile generated file this design otherwise avoids
+touching. That repo also currently has ~194 lines of unrelated, uncommitted
+changes sitting in `CTDataSet.Designer.cs`, making hand-edits there riskier.
+Decision: use the same standalone `MarkPMExamined` call for 99901 as the other
+two markers. Trade-off: the credit/pay update and the 99901 stamp become two
+separate writes instead of one atomic transaction — if the process dies in the
+narrow window between them, the pairing would have updated financials but no
+99901 stamp yet. Acceptable given this codebase's existing error-handling
+style (broad catch, log Critical, keep going), and strictly better than
+today's behavior (no marker at all, ever, in that scenario).
 
 ### Error handling
 
