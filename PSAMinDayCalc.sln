@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.36401.2 d17.14
+VisualStudioVersion = 17.14.36401.2
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SFICTDataAccess", "..\CTDataAccess\SFICTDataAccess.csproj", "{32DC1F3D-04BA-4BFC-A48B-1345BA31C063}"
 EndProject
@@ -26,6 +26,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CTApp", "..\CTApp\CTApp.csproj", "{659BEDFF-92A3-4F2D-A5AC-DA489983EA9D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PVA", "PVA\PVA.csproj", "{E9DF3E91-50AD-4342-A1AB-5F23A8F6F835}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PairingInspect", "PairingInspect\PairingInspect.csproj", "{A1B2C3D4-1111-4E5F-9A6B-7C8D9E0F1A2B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -97,6 +99,12 @@ Global
 		{E9DF3E91-50AD-4342-A1AB-5F23A8F6F835}.Release|Any CPU.ActiveCfg = Release|x86
 		{E9DF3E91-50AD-4342-A1AB-5F23A8F6F835}.Release|x86.ActiveCfg = Release|x86
 		{E9DF3E91-50AD-4342-A1AB-5F23A8F6F835}.Release|x86.Build.0 = Release|x86
+		{A1B2C3D4-1111-4E5F-9A6B-7C8D9E0F1A2B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-1111-4E5F-9A6B-7C8D9E0F1A2B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-1111-4E5F-9A6B-7C8D9E0F1A2B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-1111-4E5F-9A6B-7C8D9E0F1A2B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-1111-4E5F-9A6B-7C8D9E0F1A2B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-1111-4E5F-9A6B-7C8D9E0F1A2B}.Release|x86.ActiveCfg = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
