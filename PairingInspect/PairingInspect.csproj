@@ -76,6 +76,9 @@
     <Compile Include="PairingInspectForm.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="PairingInspectForm.Designer.cs">
+      <DependentUpon>PairingInspectForm.cs</DependentUpon>
+    </Compile>
     <Compile Include="MarkerNameResolver.cs" />
     <Compile Include="MinDayDiffCalculator.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
@@ -90,6 +93,11 @@
       <Project>{32DC1F3D-04BA-4BFC-A48B-1345BA31C063}</Project>
       <Name>SFICTDataAccess</Name>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="PairingInspectForm.resx">
+      <DependentUpon>PairingInspectForm.cs</DependentUpon>
+    </EmbeddedResource>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
