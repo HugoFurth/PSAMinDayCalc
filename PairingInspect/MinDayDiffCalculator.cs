@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using SFICTDataAccess;
 
 namespace PairingInspect
@@ -6,29 +5,20 @@ namespace PairingInspect
     public class MinDayAmount
         {
         public int Credit;
-        public int Pay;
-        public bool HasMinDay { get { return Credit > 0 || Pay > 0; } }
+        public bool HasMinDay { get { return Credit > 0; } }
         }
 
     public static class MinDayDiffCalculator
         {
-        public static MinDayAmount CalculateForDuty(PairingDuty duty, IEnumerable<PairingLegItem> dutyLegs)
+        // Leg-level actual credit (FL.Actcdt) is never populated in this system --
+        // confirmed empirically (3605/3605 FL rows on a sample date all read 0).
+        // Actualized credit only exists at the duty level (DB.Actcdt_Domtime/Inttime),
+        // so min-day is detected by comparing the duty's actualized credit against its
+        // pre-actualization estimate rather than summing (nonexistent) leg actuals.
+        public static MinDayAmount CalculateForDuty(PairingDuty duty)
             {
-            int legCreditSum = 0;
-            int legPaySum = 0;
-            foreach (PairingLegItem leg in dutyLegs)
-                {
-                if (leg is AirlinePairingLeg)
-                    {
-                    AirlinePairingLeg airLeg = (AirlinePairingLeg)leg;
-                    legCreditSum += airLeg.ActCredit;
-                    legPaySum += airLeg.ActDhdPay;
-                    }
-                }
-
             MinDayAmount result = new MinDayAmount();
-            result.Credit = duty.ActCredit > legCreditSum ? duty.ActCredit - legCreditSum : 0;
-            result.Pay = duty.ActPay > legPaySum ? duty.ActPay - legPaySum : 0;
+            result.Credit = duty.ActCredit > duty.EstCredit ? duty.ActCredit - duty.EstCredit : 0;
             return result;
             }
         }

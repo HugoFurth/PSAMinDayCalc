@@ -33,6 +33,7 @@ namespace PairingInspect
             this.btnLookUp = new System.Windows.Forms.Button();
             this.lblHeader = new System.Windows.Forms.Label();
             this.pnlGrid = new System.Windows.Forms.Panel();
+            this.cboRecentPairings = new System.Windows.Forms.ComboBox();
             this.SuspendLayout();
             //
             // txtPairingID
@@ -58,6 +59,15 @@ namespace PairingInspect
             this.btnLookUp.Text = "Look Up";
             this.btnLookUp.Click += new System.EventHandler(this.btnLookUp_Click);
             //
+            // cboRecentPairings
+            //
+            this.cboRecentPairings.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cboRecentPairings.Location = new System.Drawing.Point(450, 19);
+            this.cboRecentPairings.Name = "cboRecentPairings";
+            this.cboRecentPairings.Size = new System.Drawing.Size(300, 21);
+            this.cboRecentPairings.TabIndex = 5;
+            this.cboRecentPairings.SelectedIndexChanged += new System.EventHandler(this.cboRecentPairings_SelectedIndexChanged);
+            //
             // lblHeader
             //
             this.lblHeader.Location = new System.Drawing.Point(20, 55);
@@ -79,11 +89,14 @@ namespace PairingInspect
             this.ClientSize = new System.Drawing.Size(1200, 750);
             this.Controls.Add(this.pnlGrid);
             this.Controls.Add(this.lblHeader);
+            this.Controls.Add(this.cboRecentPairings);
             this.Controls.Add(this.btnLookUp);
             this.Controls.Add(this.txtPairingDate);
             this.Controls.Add(this.txtPairingID);
             this.Name = "PairingInspectForm";
             this.Text = "Pairing Inspect";
+            this.AcceptButton = this.btnLookUp;
+            this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.PairingInspectForm_FormClosing);
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -96,5 +109,6 @@ namespace PairingInspect
         private System.Windows.Forms.Button btnLookUp;
         private System.Windows.Forms.Label lblHeader;
         private System.Windows.Forms.Panel pnlGrid;
+        private System.Windows.Forms.ComboBox cboRecentPairings;
         }
     }
