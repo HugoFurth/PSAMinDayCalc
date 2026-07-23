@@ -4,8 +4,12 @@ using System.Collections.Specialized;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 using SFICTDataAccess;
+using SFICTDateTimeUtils;
 using Telerik.WinControls;
 using Telerik.WinControls.UI;
 
@@ -27,7 +31,7 @@ namespace PairingInspect
             prg = new CTPairing();
             SetupGrid();
             txtPairingID.Text = Properties.Settings.Default.LastPairingID;
-            txtPairingDate.Text = Properties.Settings.Default.LastPairingDate;
+            txtPairingDate.Text = PairingDateToDisplay(Properties.Settings.Default.LastPairingDate);
             RefreshRecentComboBox();
 
             if (!string.IsNullOrWhiteSpace(txtPairingID.Text) && !string.IsNullOrWhiteSpace(txtPairingDate.Text))
@@ -52,7 +56,33 @@ namespace PairingInspect
             grid.Columns.Add(new GridViewTextBoxColumn("ArrvTime", "ArrvTime") { HeaderText = "Arrv", TextAlignment = ContentAlignment.MiddleCenter });
             grid.Columns.Add(new GridViewTextBoxColumn("Credit", "CreditDisplay") { HeaderText = "Credit" + Environment.NewLine + "(Mins)", TextAlignment = ContentAlignment.MiddleRight });
             grid.Columns.Add(new GridViewTextBoxColumn("CreditHHMM", "CreditHHMMDisplay") { HeaderText = "Credit" + Environment.NewLine + "(HH:MM)", TextAlignment = ContentAlignment.MiddleRight });
-            grid.Columns.Add(new GridViewTextBoxColumn("Summary", "Summary") { HeaderText = "Duty Summary" });
+            grid.Columns.Add(new GridViewTextBoxColumn("Report", "Report") { HeaderText = "Report", TextAlignment = ContentAlignment.MiddleCenter });
+            grid.Columns.Add(new GridViewTextBoxColumn("Release", "Release") { HeaderText = "Release", TextAlignment = ContentAlignment.MiddleCenter });
+            grid.Columns.Add(new GridViewTextBoxColumn("DutyTime", "DutyTime") { HeaderText = "Duty Time", TextAlignment = ContentAlignment.MiddleCenter });
+            grid.Columns.Add(new GridViewTextBoxColumn("Note", "Note") { HeaderText = "Note", TextAlignment = ContentAlignment.MiddleCenter });
+
+            // ColumnGroupsViewDefinition only shows columns explicitly listed in it --
+            // every column needs a home, including ones that aren't part of any
+            // visible group heading (put those in a ShowHeader=false group so they
+            // render normally, with no extra header row of their own).
+            ColumnGroupsViewDefinition columnGroupsView = new ColumnGroupsViewDefinition();
+
+            GridViewColumnGroup leadingColumns = new GridViewColumnGroup("");
+            leadingColumns.ShowHeader = false;
+            leadingColumns.Rows.Add(new GridViewColumnGroupRow());
+            foreach (string name in new string[] { "DutyPeriod", "Date", "OA", "FlightNum", "Deadhead", "DeptCity", "ArrvCity", "DeptTime", "ArrvTime", "Credit", "CreditHHMM" })
+                leadingColumns.Rows[0].ColumnNames.Add(name);
+            columnGroupsView.ColumnGroups.Add(leadingColumns);
+
+            GridViewColumnGroup dutySummaryGroup = new GridViewColumnGroup("Duty Summary");
+            dutySummaryGroup.Rows.Add(new GridViewColumnGroupRow());
+            dutySummaryGroup.Rows[0].ColumnNames.Add("Report");
+            dutySummaryGroup.Rows[0].ColumnNames.Add("Release");
+            dutySummaryGroup.Rows[0].ColumnNames.Add("DutyTime");
+            dutySummaryGroup.Rows[0].ColumnNames.Add("Note");
+            columnGroupsView.ColumnGroups.Add(dutySummaryGroup);
+
+            grid.ViewDefinition = columnGroupsView;
 
             grid.TableElement.TableHeaderHeight = 40;
             grid.ViewCellFormatting += grid_ViewCellFormatting;
@@ -63,7 +93,9 @@ namespace PairingInspect
             // and a plain "does the file mention this column name" check doesn't catch
             // renames or reorders, only missing columns. Fingerprint name+header (in
             // definition order) straight from what was just built above, so this never
-            // needs manual upkeep when columns change.
+            // needs manual upkeep when columns change. GridSchemaVersion covers
+            // structural changes the per-column fingerprint can't see, like switching
+            // to a grouped-column ViewDefinition.
             string currentFingerprint = GridColumnFingerprint();
             if (File.Exists(GridLayoutPath) && File.Exists(GridFingerprintPath) &&
                 File.ReadAllText(GridFingerprintPath) == currentFingerprint)
@@ -90,6 +122,7 @@ namespace PairingInspect
                 // here must have a matching reset on the "doesn't apply" branch, or
                 // formatting bleeds from whatever row/cell last used this element.
                 bool isCreditColumn = e.Column != null && (e.Column.Name == "Credit" || e.Column.Name == "CreditHHMM");
+                bool isDutySummaryColumn = e.Column != null && (e.Column.Name == "Report" || e.Column.Name == "Release" || e.Column.Name == "DutyTime");
 
                 if (row.RowKind == "DividerBeforeDuty" || row.RowKind == "DividerAfterDuty")
                     {
@@ -105,10 +138,25 @@ namespace PairingInspect
                     e.CellElement.ResetValue(LightVisualElement.BackColorProperty, ValueResetFlags.Local);
                     }
 
-                if (isCreditColumn && (row.RowKind == "Duty" || row.RowKind == "Totals"))
+                bool isArrvTimeColumn = e.Column != null && e.Column.Name == "ArrvTime";
+
+                if ((isCreditColumn && (row.RowKind == "Duty" || row.RowKind == "Totals")) ||
+                    (isDutySummaryColumn && row.RowKind == "Duty") ||
+                    (isArrvTimeColumn && row.RowKind == "Totals"))
                     e.CellElement.Font = new Font(e.CellElement.Font, FontStyle.Bold);
                 else
                     e.CellElement.ResetValue(LightVisualElement.FontProperty, ValueResetFlags.Local);
+
+                bool isNoteColumn = e.Column != null && e.Column.Name == "Note";
+                if (isNoteColumn && !string.IsNullOrEmpty(row.Note))
+                    {
+                    e.CellElement.DisableHTMLRendering = false;
+                    e.CellElement.Text = "<html><color= 34, 139, 34>✓ <color= 0, 0, 0>" + row.Note;
+                    }
+                else
+                    {
+                    e.CellElement.DisableHTMLRendering = true;
+                    }
                 }
             }
 
@@ -136,9 +184,16 @@ namespace PairingInspect
             get { return Path.Combine(Application.StartupPath, "PairingInspectGridLayout.fingerprint.txt"); }
             }
 
+        // Bump this whenever a structural change isn't captured by the per-column
+        // fingerprint below -- e.g. switching ViewDefinition (plain columns vs.
+        // grouped-column headers), which the saved layout also can't distinguish
+        // between until it's re-saved under the new structure.
+        private const string GridSchemaVersion = "columngroups-v1";
+
         private string GridColumnFingerprint()
             {
-            return string.Join("|", grid.Columns.Select(c => c.Name + "=" + c.FieldName + "=" + c.HeaderText + "=" + c.TextAlignment));
+            return GridSchemaVersion + "|" +
+                string.Join("|", grid.Columns.Select(c => c.Name + "=" + c.FieldName + "=" + c.HeaderText + "=" + c.TextAlignment));
             }
 
         private void PairingInspectForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -146,7 +201,7 @@ namespace PairingInspect
             grid.SaveLayout(GridLayoutPath);
             File.WriteAllText(GridFingerprintPath, GridColumnFingerprint());
             Properties.Settings.Default.LastPairingID = txtPairingID.Text;
-            Properties.Settings.Default.LastPairingDate = txtPairingDate.Text;
+            Properties.Settings.Default.LastPairingDate = PairingDateToInternal(txtPairingDate.Text);
             Properties.Settings.Default.Save();
             }
 
@@ -154,20 +209,165 @@ namespace PairingInspect
             {
             try
                 {
-                int result = prg.Assemble(txtPairingID.Text.Trim(), txtPairingDate.Text.Trim());
+                string internalDate = PairingDateToInternal(txtPairingDate.Text.Trim());
+                int result = prg.Assemble(txtPairingID.Text.Trim(), internalDate);
                 if (result == 0)
                     {
                     RadMessageBox.Show("Pairing not found: " + txtPairingID.Text + " " + txtPairingDate.Text);
                     return;
                     }
-                DisplayHeader();
-                PopulateGrid();
-                AddToRecentList(txtPairingID.Text.Trim(), txtPairingDate.Text.Trim());
+                txtPairingDate.Text = PairingDateToDisplay(internalDate);
+                string markerName = MarkerNameResolver.Resolve(prg, prg.PrgHdr.UpdateidUpdempno);
+                DisplayHeader(markerName);
+                PopulateGrid(markerName);
+                AddToRecentList(txtPairingID.Text.Trim(), internalDate);
                 }
             catch (Exception ex)
                 {
                 RadMessageBox.Show("Error looking up pairing: " + ex.Message);
                 }
+            }
+
+        private void btnQueueToCrewPost_Click(object sender, EventArgs e)
+            {
+            // TODO: implement
+            }
+
+        private void btnRecalculateMinDay_Click(object sender, EventArgs e)
+            {
+            // TODO: implement
+            }
+
+        private void btnLaunchCTWPM_Click(object sender, EventArgs e)
+            {
+            try
+                {
+                // ctwpm.exe parses positional args: <FUNCTION> <PrgNo> <PrgDate:YYYYMMDD> --
+                // see PMSelectionForm.cpp:654-708 in the CTWPM source. INQUIRE opens read-only,
+                // matching this tool's own read-only nature.
+                if (prg.PrgHdr != null)
+                    {
+                    System.Diagnostics.Process ctwpmProcess = System.Diagnostics.Process.Start(@"D:\CrewTrac\EXE\ctwpm.exe",
+                        "INQUIRE " + prg.PrgHdr.PrgID + " " + prg.PrgHdr.PrgDate);
+                    ClickCtwpmSelectionOkButton((uint)ctwpmProcess.Id);
+                    }
+                else
+                    System.Diagnostics.Process.Start(@"D:\CrewTrac\EXE\ctwpm.exe");
+                }
+            catch (Exception ex)
+                {
+                RadMessageBox.Show("Failed to launch CTWPM: " + ex.Message);
+                }
+            }
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc enumProc, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        private const uint BM_CLICK = 0x00F5;
+        private const string CtwpmSelectionFormClass = "TfrmPMSelection";
+
+        // Prefills the fields (positional args, handled in CTWPM's FormCreate) but still leaves
+        // the user to click OK themselves -- this skips that click so they land straight on the
+        // interactive pairing screen. The selection dialog's OK button is a real native Win32
+        // HWND (a VCL TButton, not owner-drawn like Telerik's grids), registered under VCL's own
+        // window class "TButton" -- NOT the generic system "Button" class -- so BM_CLICK reliably
+        // fires its OnClick exactly as a mouse click would.
+        //
+        // Uses EnumWindows/EnumChildWindows rather than FindWindow/FindWindowEx: testing showed
+        // FindWindow fails to locate this exact window even when EnumWindows finds the identical
+        // HWND (matching class and title) moments apart, in-process and from an external harness
+        // alike. Root cause unconfirmed, but EnumWindows/EnumChildWindows proved reliable, so this
+        // avoids FindWindow/FindWindowEx entirely. Scoped to the PID we just launched, in case
+        // another CTWPM instance is already open.
+        //
+        // Deliberately does NOT use CTWPM's own "launched by MS" auto-accept mode (SW_SHOWMINIMIZED
+        // startup flag): that mode also runs the selected function to completion and closes the
+        // whole app afterward, which would defeat the purpose here of leaving CTWPM open for the
+        // user.
+        //
+        // Re-resolves the selection window AND its OK button together on every retry, rather than
+        // caching the window handle once found -- testing showed CTWPM's selection form gets
+        // destroyed and recreated shortly after it first appears (the first HWND we find fails
+        // IsWindow moments later), so a button lookup scoped to a once-found window handle can
+        // silently target a form that's already gone. Re-resolving both each pass means a
+        // recreated window is picked up naturally instead of leaving the search stuck on a stale
+        // handle.
+        private static void ClickCtwpmSelectionOkButton(uint ctwpmProcessId)
+            {
+            IntPtr hBtn = IntPtr.Zero;
+            for (int i = 0; i < 200 && hBtn == IntPtr.Zero; i++)
+                {
+                IntPtr hWnd = FindCtwpmSelectionWindow(ctwpmProcessId);
+                if (hWnd != IntPtr.Zero)
+                    hBtn = FindOkButton(hWnd);
+
+                if (hBtn == IntPtr.Zero)
+                    {
+                    Thread.Sleep(50);
+                    Application.DoEvents();
+                    }
+                }
+
+            if (hBtn != IntPtr.Zero)
+                PostMessage(hBtn, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+            }
+
+        private static IntPtr FindCtwpmSelectionWindow(uint pid)
+            {
+            IntPtr found = IntPtr.Zero;
+            EnumWindows(delegate(IntPtr h, IntPtr l)
+                {
+                uint winPid;
+                GetWindowThreadProcessId(h, out winPid);
+                if (winPid == pid)
+                    {
+                    StringBuilder sbClass = new StringBuilder(256);
+                    GetClassName(h, sbClass, 256);
+                    if (sbClass.ToString() == CtwpmSelectionFormClass)
+                        {
+                        found = h;
+                        return false;
+                        }
+                    }
+                return true;
+                }, IntPtr.Zero);
+            return found;
+            }
+
+        private static IntPtr FindOkButton(IntPtr hWndParent)
+            {
+            IntPtr found = IntPtr.Zero;
+            EnumChildWindows(hWndParent, delegate(IntPtr h, IntPtr l)
+                {
+                StringBuilder sbClass = new StringBuilder(256);
+                StringBuilder sbText = new StringBuilder(256);
+                GetClassName(h, sbClass, 256);
+                GetWindowText(h, sbText, 256);
+                if (sbClass.ToString() == "TButton" && sbText.ToString() == "OK")
+                    {
+                    found = h;
+                    return false;
+                    }
+                return true;
+                }, IntPtr.Zero);
+            return found;
             }
 
         private void cboRecentPairings_SelectedIndexChanged(object sender, EventArgs e)
@@ -179,7 +379,7 @@ namespace PairingInspect
             if (spaceIdx <= 0)
                 return;
             txtPairingID.Text = entry.Substring(0, spaceIdx);
-            txtPairingDate.Text = entry.Substring(spaceIdx + 1);
+            txtPairingDate.Text = PairingDateToDisplay(entry.Substring(spaceIdx + 1));
             btnLookUp_Click(sender, e);
             }
 
@@ -216,13 +416,52 @@ namespace PairingInspect
             cboRecentPairings.SelectedIndexChanged += cboRecentPairings_SelectedIndexChanged;
             }
 
-        private void DisplayHeader()
+        private void DisplayHeader(string markerName)
             {
             PairingHeader hdr = prg.PrgHdr;
-            string markerName = MarkerNameResolver.Resolve(prg, hdr.UpdateidUpdempno);
-            lblHeader.Text = string.Format(
-                "Pairing: {0}   From: {1}   Thru: {2}   Duty Periods: {3}   Canceled: {4}   Crew Type: {5}   Last touched by: {6}",
-                hdr.PrgID, hdr.PrgDate, hdr.ActEnd.AsDisplayDate, hdr.NumDutyPeriods, hdr.Canceled, hdr.CrewType, markerName);
+
+            lblStatusValue.Text = hdr.Canceled ? "Canceled" : "Active";
+            lblCrewTypeValue.Text = CrewTypeDisplay(hdr.CrewType);
+            lblCreditStatusValue.Text = CreditStatusDisplay(markerName) + " (empno=" + hdr.UpdateidUpdempno + ")";
+            LayoutHeaderLabels();
+            }
+
+        private static string CreditStatusDisplay(string markerName)
+            {
+            if (markerName == "MinDay - Updated")
+                return "Min Day applied";
+            if (markerName == "MinDay - No Update Needed")
+                return "Min Day not applicable";
+            if (markerName == "MinDay - Exception")
+                return markerName;
+            return "Pending Min Day processing";
+            }
+
+        private void LayoutHeaderLabels()
+            {
+            const int fieldGap = 20;
+            const int titleValueGap = 4;
+            int y = lblStatusTitle.Top;
+            int x = lblStatusTitle.Left;
+
+            Label[] labels = { lblStatusTitle, lblStatusValue, lblCrewTypeTitle, lblCrewTypeValue, lblCreditStatusTitle, lblCreditStatusValue };
+            for (int i = 0; i < labels.Length; i++)
+                {
+                labels[i].Location = new Point(x, y);
+                x += labels[i].Width + (i % 2 == 0 ? titleValueGap : fieldGap);
+                }
+            }
+
+        // PM.type: B = both, P = pilot, C = cabin crew (per ctfiles.h)
+        private static string CrewTypeDisplay(string crewType)
+            {
+            switch (crewType)
+                {
+                case "P": return "Pilot";
+                case "C": return "FA";
+                case "B": return "Mixed";
+                default: return crewType;
+                }
             }
 
         public class InspectRow
@@ -263,7 +502,19 @@ namespace PairingInspect
                     }
                 }
 
-            public string Summary { get; set; }
+            public string Report { get; set; }
+            public string Release { get; set; }
+            public string DutyTime { get; set; }
+            public string Note { get; set; }
+            }
+
+        private static string FormatReleaseTime(DateTimeWithGMTVar report, DateTimeWithGMTVar release)
+            {
+            string time = release.AsDisplayTime;
+            if (report.AsMSDate.HasValue && release.AsMSDate.HasValue &&
+                release.AsMSDate.Value.Date == report.AsMSDate.Value.Date.AddDays(1))
+                return time + "+1";
+            return time;
             }
 
         private static string FormatHHMM(int totalMinutes)
@@ -289,6 +540,27 @@ namespace PairingInspect
             return internalDate.Substring(4, 2) + "/" + internalDate.Substring(6, 2);
             }
 
+        // Pairing date field: displayed/typed as MM/DD/YY (slashes optional on input),
+        // stored everywhere else (settings, recent list, Assemble()) as CT's internal
+        // YYYYMMDD. These two convert between the two -- always convert at the boundary
+        // rather than letting either format leak into the wrong place.
+        private static string PairingDateToInternal(string mmddyyInput)
+            {
+            string digits = new string(mmddyyInput.Where(char.IsDigit).ToArray());
+            if (digits.Length == 6)
+                return "20" + digits.Substring(4, 2) + digits.Substring(0, 2) + digits.Substring(2, 2);
+            if (digits.Length == 8)
+                return digits;
+            return mmddyyInput;
+            }
+
+        private static string PairingDateToDisplay(string internalDate)
+            {
+            if (string.IsNullOrEmpty(internalDate) || internalDate.Length != 8)
+                return internalDate;
+            return internalDate.Substring(4, 2) + "/" + internalDate.Substring(6, 2) + "/" + internalDate.Substring(2, 2);
+            }
+
         // NonFlyingPairingLeg/OtherAirlineDeadheadPairingLeg only expose SkedDeptDate
         // (already "MM/DD/YY"), not a raw internal date -- trim it to match FormatMMDD's output.
         private static string FormatMMDDFromDisplayDate(string mmddyy)
@@ -310,10 +582,10 @@ namespace PairingInspect
             return sked;
             }
 
-        private void PopulateGrid()
+        private void PopulateGrid(string markerName)
             {
             List<InspectRow> rows = new List<InspectRow>();
-            int totalCredit = 0, totalPay = 0;
+            int totalCredit = 0;
 
             var dutiesByPeriod = prg.PairingDuties.OfType<PairingDuty>()
                 .OrderBy(d => d.DutyPeriod).ToList();
@@ -321,12 +593,15 @@ namespace PairingInspect
             foreach (PairingDuty duty in dutiesByPeriod)
                 {
                 var dutyLegs = prg.PairingLegs.Where(l => l.DutyPeriod == duty.DutyPeriod).ToList();
+                int legCreditSum = 0;
 
                 foreach (PairingLegItem leg in dutyLegs)
                     {
                     if (leg is AirlinePairingLeg)
                         {
                         AirlinePairingLeg airLeg = (AirlinePairingLeg)leg;
+                        int legCredit = LatestNonZeroCredit(airLeg.SkedCredit, airLeg.EstCredit, airLeg.ActCredit);
+                        legCreditSum += legCredit;
                         rows.Add(new InspectRow
                             {
                             DutyPeriod = duty.DutyPeriod.ToString(),
@@ -337,12 +612,13 @@ namespace PairingInspect
                             ArrvCity = airLeg.ArrvCity,
                             DeptTime = airLeg.SkedDeptTimeasHHMM,
                             ArrvTime = airLeg.SkedArrvTimeasHHMM,
-                            Credit = LatestNonZeroCredit(airLeg.SkedCredit, airLeg.EstCredit, airLeg.ActCredit)
+                            Credit = legCredit
                             });
                         }
                     else if (leg is NonFlyingPairingLeg)
                         {
                         NonFlyingPairingLeg nfLeg = (NonFlyingPairingLeg)leg;
+                        legCreditSum += nfLeg.Credit;
                         rows.Add(new InspectRow
                             {
                             DutyPeriod = duty.DutyPeriod.ToString(),
@@ -361,6 +637,7 @@ namespace PairingInspect
                     else if (leg is OtherAirlineDeadheadPairingLeg)
                         {
                         OtherAirlineDeadheadPairingLeg oaLeg = (OtherAirlineDeadheadPairingLeg)leg;
+                        legCreditSum += oaLeg.Credit;
                         rows.Add(new InspectRow
                             {
                             DutyPeriod = duty.DutyPeriod.ToString(),
@@ -380,20 +657,20 @@ namespace PairingInspect
 
                 rows.Add(new InspectRow { RowKind = "DividerBeforeDuty" });
 
-                MinDayAmount minDay = MinDayDiffCalculator.CalculateForDuty(duty);
+                MinDayAmount minDay = MinDayDiffCalculator.CalculateForDuty(duty, prg.PrgHdr.PrgDate, prg.PrgHdr.CrewType, markerName, legCreditSum);
                 rows.Add(new InspectRow
                     {
                     DutyPeriod = duty.DutyPeriod.ToString(),
                     RowKind = "Duty",
                     Credit = duty.ActCredit,
                     CreditDeltaAmount = minDay.Credit,
-                    Summary = string.Format("Report {0}  Release {1}",
-                        duty.Report.AsDisplayDate + " " + duty.Report.AsDisplayTime,
-                        duty.ActEnd.AsDisplayDate + " " + duty.ActEnd.AsDisplayTime)
+                    Report = duty.Report.AsDisplayTime,
+                    Release = FormatReleaseTime(duty.Report, duty.ActEnd),
+                    DutyTime = FormatHHMM(duty.ActOnDuty),
+                    Note = minDay.HasMinDay ? "Min Day" : ""
                     });
 
                 totalCredit += duty.ActCredit;
-                totalPay += duty.ActPay;
 
                 rows.Add(new InspectRow { RowKind = "DividerAfterDuty" });
                 }
@@ -402,9 +679,10 @@ namespace PairingInspect
             rows.Add(new InspectRow
                 {
                 RowKind = "Totals",
+                ArrvTime = "Totals:",
                 Credit = totalCredit + tripRig,
                 CreditDeltaAmount = tripRig,
-                Summary = string.Format("TOTALS  Credit {0}  Pay {1}", totalCredit, totalPay)
+                Note = tripRig > 0 ? "Trip Rig" : ""
                 });
 
             grid.DataSource = rows;
