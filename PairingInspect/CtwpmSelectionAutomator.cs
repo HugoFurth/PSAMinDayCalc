@@ -16,9 +16,7 @@ namespace PairingInspect
         private const string CtwpmExeName = "ctwpm.exe";
 
         // ctwpm.exe parses positional args: <FUNCTION> <PrgNo> <PrgDate:YYYYMMDD> -- see
-        // PMSelectionForm.cpp:654-708 in the CTWPM source. INQUIRE opens read-only; MODIFY allows
-        // edits, so its selection screen is left for the user to confirm by hand rather than
-        // auto-clicked past.
+        // PMSelectionForm.cpp:654-708 in the CTWPM source.
         public const string FunctionInquire = "INQUIRE";
         public const string FunctionModify = "MODIFY";
 
@@ -26,8 +24,7 @@ namespace PairingInspect
             {
             Process ctwpmProcess = Process.Start(Path.Combine(ctExeDir, CtwpmExeName),
                 function + " " + prgId + " " + prgDate);
-            if (function == FunctionInquire)
-                ClickOkButton(ctwpmProcess.Id);
+            ClickOkButton(ctwpmProcess.Id);
             }
 
         // No pairing to pre-fill, so nothing to auto-advance past -- just launch.

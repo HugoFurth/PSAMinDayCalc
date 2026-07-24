@@ -28,11 +28,11 @@ namespace PairingInspect
         /// </summary>
         private void InitializeComponent()
             {
-            this.txtPairingID = new System.Windows.Forms.TextBox();
-            this.txtPairingDate = new System.Windows.Forms.TextBox();
-            this.btnLookUp = new System.Windows.Forms.Button();
+            this.txtPairingID = new Telerik.WinControls.UI.RadTextBoxControl();
+            this.txtPairingDate = new Telerik.WinControls.UI.RadTextBoxControl();
+            this.btnLookUp = new Telerik.WinControls.UI.RadButton();
             this.pnlGrid = new System.Windows.Forms.Panel();
-            this.cboRecentPairings = new System.Windows.Forms.ComboBox();
+            this.cboRecentPairings = new Telerik.WinControls.UI.RadDropDownList();
             this.lblPairingID = new System.Windows.Forms.Label();
             this.lblPairingDate = new System.Windows.Forms.Label();
             this.lblRecentPairings = new System.Windows.Forms.Label();
@@ -42,9 +42,9 @@ namespace PairingInspect
             this.lblCrewTypeValue = new System.Windows.Forms.Label();
             this.lblCreditStatusTitle = new System.Windows.Forms.Label();
             this.lblCreditStatusValue = new System.Windows.Forms.Label();
-            this.btnQueueToCrewPost = new System.Windows.Forms.Button();
-            this.btnRecalculateMinDay = new System.Windows.Forms.Button();
-            this.btnLaunchCTWPM = new System.Windows.Forms.Button();
+            this.btnQueueToCrewPost = new Telerik.WinControls.UI.RadButton();
+            this.btnRecalculateMinDay = new Telerik.WinControls.UI.RadButton();
+            this.btnLaunchCTWPM = new Telerik.WinControls.UI.RadDropDownButton();
             this.tabMain = new Telerik.WinControls.UI.RadPageView();
             this.tabPageInspect = new Telerik.WinControls.UI.RadPageViewPage("Inspect");
             this.tabPageMinDayExceptions = new Telerik.WinControls.UI.RadPageViewPage("Min Day Exceptions");
@@ -103,12 +103,11 @@ namespace PairingInspect
             //
             // cboRecentPairings
             //
-            this.cboRecentPairings.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.cboRecentPairings.Location = new System.Drawing.Point(330, 49);
             this.cboRecentPairings.Name = "cboRecentPairings";
             this.cboRecentPairings.Size = new System.Drawing.Size(300, 21);
             this.cboRecentPairings.TabIndex = 5;
-            this.cboRecentPairings.SelectedIndexChanged += new System.EventHandler(this.cboRecentPairings_SelectedIndexChanged);
+            this.cboRecentPairings.SelectedIndexChanged += new Telerik.WinControls.UI.Data.PositionChangedEventHandler(this.cboRecentPairings_SelectedIndexChanged);
             //
             // lblStatusTitle
             //
@@ -185,7 +184,7 @@ namespace PairingInspect
             this.btnLaunchCTWPM.Name = "btnLaunchCTWPM";
             this.btnLaunchCTWPM.Size = new System.Drawing.Size(150, 24);
             this.btnLaunchCTWPM.TabIndex = 17;
-            this.btnLaunchCTWPM.Text = "Launch CTWPM";
+            this.btnLaunchCTWPM.Text = "CT Prg Function";
             this.btnLaunchCTWPM.Click += new System.EventHandler(this.btnLaunchCTWPM_Click);
             //
             // pnlGrid
@@ -251,11 +250,11 @@ namespace PairingInspect
 
         #endregion
 
-        private System.Windows.Forms.TextBox txtPairingID;
-        private System.Windows.Forms.TextBox txtPairingDate;
-        private System.Windows.Forms.Button btnLookUp;
+        private Telerik.WinControls.UI.RadTextBoxControl txtPairingID;
+        private Telerik.WinControls.UI.RadTextBoxControl txtPairingDate;
+        private Telerik.WinControls.UI.RadButton btnLookUp;
         private System.Windows.Forms.Panel pnlGrid;
-        private System.Windows.Forms.ComboBox cboRecentPairings;
+        private Telerik.WinControls.UI.RadDropDownList cboRecentPairings;
         private System.Windows.Forms.Label lblPairingID;
         private System.Windows.Forms.Label lblPairingDate;
         private System.Windows.Forms.Label lblRecentPairings;
@@ -265,9 +264,9 @@ namespace PairingInspect
         private System.Windows.Forms.Label lblCrewTypeValue;
         private System.Windows.Forms.Label lblCreditStatusTitle;
         private System.Windows.Forms.Label lblCreditStatusValue;
-        private System.Windows.Forms.Button btnQueueToCrewPost;
-        private System.Windows.Forms.Button btnRecalculateMinDay;
-        private System.Windows.Forms.Button btnLaunchCTWPM;
+        private Telerik.WinControls.UI.RadButton btnQueueToCrewPost;
+        private Telerik.WinControls.UI.RadButton btnRecalculateMinDay;
+        private Telerik.WinControls.UI.RadDropDownButton btnLaunchCTWPM;
         private Telerik.WinControls.UI.RadPageView tabMain;
         private Telerik.WinControls.UI.RadPageViewPage tabPageInspect;
         private Telerik.WinControls.UI.RadPageViewPage tabPageMinDayExceptions;

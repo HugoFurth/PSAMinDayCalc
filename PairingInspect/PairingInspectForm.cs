@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -28,6 +29,7 @@ namespace PairingInspect
                 return;
             prg = new CTPairing();
             SetupGrid();
+            SetupLaunchCtwpmButton();
             txtPairingID.Text = Properties.Settings.Default.LastPairingID;
             txtPairingDate.Text = PairingDateToDisplay(Properties.Settings.Default.LastPairingDate);
             RefreshRecentComboBox();
@@ -41,6 +43,10 @@ namespace PairingInspect
             grid = new RadGridView();
             grid.Dock = DockStyle.Fill;
             grid.ShowGroupPanel = false;
+            // Rows are hand-ordered (legs under their duty, divider rows, a trailing totals
+            // row) to mirror the reference layout -- column-click sorting would scramble that
+            // and is never appropriate here.
+            grid.EnableSorting = false;
             grid.MasterTemplate.AutoGenerateColumns = false;
             grid.MasterTemplate.AllowAddNewRow = false;
             grid.Columns.Add(new GridViewTextBoxColumn("DutyPeriod", "DutyPeriod") { HeaderText = "Duty", TextAlignment = ContentAlignment.MiddleCenter });
@@ -236,13 +242,55 @@ namespace PairingInspect
             // TODO: implement
             }
 
+        // RadDropDownButton is used only for its arrow chrome -- its own Items/RadMenuItem popup
+        // fires Click on mere hover/highlight rather than requiring an actual click, so the menu
+        // itself is a plain ContextMenuStrip (native WinForms, click-only) shown from the button's
+        // own Click. DropDownOpening is cancelled so Telerik's native (now-empty) popup never
+        // flashes up alongside it.
+        private ContextMenuStrip ctwpmFunctionMenu;
+
+        private void SetupLaunchCtwpmButton()
+            {
+            ctwpmFunctionMenu = new ContextMenuStrip();
+
+            ToolStripMenuItem itemInquire = new ToolStripMenuItem("Inquire");
+            itemInquire.Click += itemPrgInquire_Click;
+            ctwpmFunctionMenu.Items.Add(itemInquire);
+
+            ToolStripMenuItem itemModify = new ToolStripMenuItem("Modify");
+            itemModify.Click += itemPrgModify_Click;
+            ctwpmFunctionMenu.Items.Add(itemModify);
+
+            btnLaunchCTWPM.DropDownButtonElement.DropDownOpening += btnLaunchCTWPM_DropDownOpening;
+            }
+
+        private void btnLaunchCTWPM_DropDownOpening(object sender, CancelEventArgs e)
+            {
+            e.Cancel = true;
+            }
+
         private void btnLaunchCTWPM_Click(object sender, EventArgs e)
+            {
+            ctwpmFunctionMenu.Show(btnLaunchCTWPM, new Point(0, btnLaunchCTWPM.Height));
+            }
+
+        private void itemPrgInquire_Click(object sender, EventArgs e)
+            {
+            LaunchCtwpm(CtwpmSelectionAutomator.FunctionInquire);
+            }
+
+        private void itemPrgModify_Click(object sender, EventArgs e)
+            {
+            LaunchCtwpm(CtwpmSelectionAutomator.FunctionModify);
+            }
+
+        private void LaunchCtwpm(string function)
             {
             try
                 {
                 string ctExeDir = SFIConfig.AppSetting("CTEXEDIR");
                 if (prg.PrgHdr != null)
-                    CtwpmSelectionAutomator.Launch(ctExeDir, CtwpmSelectionAutomator.FunctionInquire, prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+                    CtwpmSelectionAutomator.Launch(ctExeDir, function, prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
                 else
                     CtwpmSelectionAutomator.Launch(ctExeDir);
                 }
@@ -252,7 +300,7 @@ namespace PairingInspect
                 }
             }
 
-        private void cboRecentPairings_SelectedIndexChanged(object sender, EventArgs e)
+        private void cboRecentPairings_SelectedIndexChanged(object sender, Telerik.WinControls.UI.Data.PositionChangedEventArgs e)
             {
             if (cboRecentPairings.SelectedItem == null)
                 return;
@@ -291,10 +339,11 @@ namespace PairingInspect
         private void RefreshRecentComboBox()
             {
             cboRecentPairings.SelectedIndexChanged -= cboRecentPairings_SelectedIndexChanged;
-            cboRecentPairings.Items.Clear();
+            List<string> items = new List<string>();
             if (Properties.Settings.Default.RecentPairings != null)
                 foreach (string s in Properties.Settings.Default.RecentPairings)
-                    cboRecentPairings.Items.Add(s);
+                    items.Add(s);
+            cboRecentPairings.DataSource = items;
             cboRecentPairings.SelectedIndexChanged += cboRecentPairings_SelectedIndexChanged;
             }
 
