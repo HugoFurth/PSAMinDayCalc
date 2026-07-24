@@ -79,6 +79,7 @@
     <Compile Include="PairingInspectForm.Designer.cs">
       <DependentUpon>PairingInspectForm.cs</DependentUpon>
     </Compile>
+    <Compile Include="CtwpmSelectionAutomator.cs" />
     <Compile Include="MarkerNameResolver.cs" />
     <Compile Include="MinDayDiffCalculator.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

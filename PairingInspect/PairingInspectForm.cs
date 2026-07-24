@@ -4,10 +4,8 @@ using System.Collections.Specialized;
 using System.Drawing;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading;
 using System.Windows.Forms;
+using SFIConfigUtils;
 using SFICTDataAccess;
 using SFICTDateTimeUtils;
 using Telerik.WinControls;
@@ -242,132 +240,16 @@ namespace PairingInspect
             {
             try
                 {
-                // ctwpm.exe parses positional args: <FUNCTION> <PrgNo> <PrgDate:YYYYMMDD> --
-                // see PMSelectionForm.cpp:654-708 in the CTWPM source. INQUIRE opens read-only,
-                // matching this tool's own read-only nature.
+                string ctExeDir = SFIConfig.AppSetting("CTEXEDIR");
                 if (prg.PrgHdr != null)
-                    {
-                    System.Diagnostics.Process ctwpmProcess = System.Diagnostics.Process.Start(@"D:\CrewTrac\EXE\ctwpm.exe",
-                        "INQUIRE " + prg.PrgHdr.PrgID + " " + prg.PrgHdr.PrgDate);
-                    ClickCtwpmSelectionOkButton((uint)ctwpmProcess.Id);
-                    }
+                    CtwpmSelectionAutomator.Launch(ctExeDir, CtwpmSelectionAutomator.FunctionInquire, prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
                 else
-                    System.Diagnostics.Process.Start(@"D:\CrewTrac\EXE\ctwpm.exe");
+                    CtwpmSelectionAutomator.Launch(ctExeDir);
                 }
             catch (Exception ex)
                 {
                 RadMessageBox.Show("Failed to launch CTWPM: " + ex.Message);
                 }
-            }
-
-        [DllImport("user32.dll")]
-        private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
-
-        [DllImport("user32.dll")]
-        private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc enumProc, IntPtr lParam);
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-
-        [DllImport("user32.dll")]
-        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-
-        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-        private const uint BM_CLICK = 0x00F5;
-        private const string CtwpmSelectionFormClass = "TfrmPMSelection";
-
-        // Prefills the fields (positional args, handled in CTWPM's FormCreate) but still leaves
-        // the user to click OK themselves -- this skips that click so they land straight on the
-        // interactive pairing screen. The selection dialog's OK button is a real native Win32
-        // HWND (a VCL TButton, not owner-drawn like Telerik's grids), registered under VCL's own
-        // window class "TButton" -- NOT the generic system "Button" class -- so BM_CLICK reliably
-        // fires its OnClick exactly as a mouse click would.
-        //
-        // Uses EnumWindows/EnumChildWindows rather than FindWindow/FindWindowEx: testing showed
-        // FindWindow fails to locate this exact window even when EnumWindows finds the identical
-        // HWND (matching class and title) moments apart, in-process and from an external harness
-        // alike. Root cause unconfirmed, but EnumWindows/EnumChildWindows proved reliable, so this
-        // avoids FindWindow/FindWindowEx entirely. Scoped to the PID we just launched, in case
-        // another CTWPM instance is already open.
-        //
-        // Deliberately does NOT use CTWPM's own "launched by MS" auto-accept mode (SW_SHOWMINIMIZED
-        // startup flag): that mode also runs the selected function to completion and closes the
-        // whole app afterward, which would defeat the purpose here of leaving CTWPM open for the
-        // user.
-        //
-        // Re-resolves the selection window AND its OK button together on every retry, rather than
-        // caching the window handle once found -- testing showed CTWPM's selection form gets
-        // destroyed and recreated shortly after it first appears (the first HWND we find fails
-        // IsWindow moments later), so a button lookup scoped to a once-found window handle can
-        // silently target a form that's already gone. Re-resolving both each pass means a
-        // recreated window is picked up naturally instead of leaving the search stuck on a stale
-        // handle.
-        private static void ClickCtwpmSelectionOkButton(uint ctwpmProcessId)
-            {
-            IntPtr hBtn = IntPtr.Zero;
-            for (int i = 0; i < 200 && hBtn == IntPtr.Zero; i++)
-                {
-                IntPtr hWnd = FindCtwpmSelectionWindow(ctwpmProcessId);
-                if (hWnd != IntPtr.Zero)
-                    hBtn = FindOkButton(hWnd);
-
-                if (hBtn == IntPtr.Zero)
-                    {
-                    Thread.Sleep(50);
-                    Application.DoEvents();
-                    }
-                }
-
-            if (hBtn != IntPtr.Zero)
-                PostMessage(hBtn, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
-            }
-
-        private static IntPtr FindCtwpmSelectionWindow(uint pid)
-            {
-            IntPtr found = IntPtr.Zero;
-            EnumWindows(delegate(IntPtr h, IntPtr l)
-                {
-                uint winPid;
-                GetWindowThreadProcessId(h, out winPid);
-                if (winPid == pid)
-                    {
-                    StringBuilder sbClass = new StringBuilder(256);
-                    GetClassName(h, sbClass, 256);
-                    if (sbClass.ToString() == CtwpmSelectionFormClass)
-                        {
-                        found = h;
-                        return false;
-                        }
-                    }
-                return true;
-                }, IntPtr.Zero);
-            return found;
-            }
-
-        private static IntPtr FindOkButton(IntPtr hWndParent)
-            {
-            IntPtr found = IntPtr.Zero;
-            EnumChildWindows(hWndParent, delegate(IntPtr h, IntPtr l)
-                {
-                StringBuilder sbClass = new StringBuilder(256);
-                StringBuilder sbText = new StringBuilder(256);
-                GetClassName(h, sbClass, 256);
-                GetWindowText(h, sbText, 256);
-                if (sbClass.ToString() == "TButton" && sbText.ToString() == "OK")
-                    {
-                    found = h;
-                    return false;
-                    }
-                return true;
-                }, IntPtr.Zero);
-            return found;
             }
 
         private void cboRecentPairings_SelectedIndexChanged(object sender, EventArgs e)
