@@ -7,6 +7,14 @@ namespace PairingInspect
     {
     public static class MarkerNameResolver
         {
+        public static bool IsKnownMarker(uint empno)
+            {
+            uint markerUpdated = uint.Parse(SFIConfig.AppSettingRaw("MinDayMarkerUpdated"));
+            uint markerNoUpdateNeeded = uint.Parse(SFIConfig.AppSettingRaw("MinDayMarkerNoUpdateNeeded"));
+            uint markerException = uint.Parse(SFIConfig.AppSettingRaw("MinDayMarkerException"));
+            return empno == markerUpdated || empno == markerNoUpdateNeeded || empno == markerException;
+            }
+
         public static string Resolve(CTDataAccesBase dataAccess, uint empno)
             {
             uint markerUpdated = uint.Parse(SFIConfig.AppSettingRaw("MinDayMarkerUpdated"));

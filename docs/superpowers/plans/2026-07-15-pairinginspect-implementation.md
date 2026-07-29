@@ -357,15 +357,15 @@ namespace PairingInspect
     {
     public static class MarkerNameResolver
         {
-        public const uint MARKER_UPDATED = 99901;
-        public const uint MARKER_NO_UPDATE_NEEDED = 99902;
-        public const uint MARKER_EXCEPTION = 99903;
+        public const uint MINDAY_UPDATED = 99901;
+        public const uint MINDAY_NO_UPDATE_NEEDED = 99902;
+        public const uint MINDAY_EXCEPTION = 99903;
 
         public static string Resolve(CTDataAccesBase dataAccess, uint empno)
             {
-            if (empno == MARKER_UPDATED) return "MinDay - Updated";
-            if (empno == MARKER_NO_UPDATE_NEEDED) return "MinDay - No Update Needed";
-            if (empno == MARKER_EXCEPTION) return "MinDay - Exception";
+            if (empno == MINDAY_UPDATED) return "MinDay - Updated";
+            if (empno == MINDAY_NO_UPDATE_NEEDED) return "MinDay - No Update Needed";
+            if (empno == MINDAY_EXCEPTION) return "MinDay - Exception";
 
             using (OleDbCommand cmd = dataAccess.Connection.CreateCommand())
                 {

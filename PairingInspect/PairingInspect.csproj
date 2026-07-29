@@ -103,6 +103,10 @@
       <Project>{32DC1F3D-04BA-4BFC-A48B-1345BA31C063}</Project>
       <Name>SFICTDataAccess</Name>
     </ProjectReference>
+    <ProjectReference Include="..\MinDayProcess\MinDayProcess.csproj">
+      <Project>{5AFCA911-D96D-41A6-BC0D-C09ED9DBC96C}</Project>
+      <Name>MinDayProcess</Name>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="PairingInspectForm.resx">

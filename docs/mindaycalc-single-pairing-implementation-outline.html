@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementation Outline: On-Demand Single-Pairing Min-Day Calculation</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #5a5a5a;
+    --border: #e0e0e0;
+    --code-bg: #f3f3f3;
+    --callout-bg: #f0f4fb;
+    --callout-border: #3b5bdb;
+    --step-bg: #fafafa;
+    --step-num-bg: #3b5bdb;
+    --step-num-fg: #ffffff;
+    --warn-bg: #fdf3e7;
+    --warn-border: #c98a1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1d21;
+      --fg: #e8e8e8;
+      --muted: #a0a0a0;
+      --border: #3a3d42;
+      --code-bg: #2a2d32;
+      --callout-bg: #1b2436;
+      --callout-border: #6a8aec;
+      --step-bg: #24262b;
+      --step-num-bg: #4a6ae8;
+      --step-num-fg: #ffffff;
+      --warn-bg: #2e2416;
+      --warn-border: #d9a441;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 5rem;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .page { max-width: 800px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 2rem; font-size: 0.95rem; }
+  h2 {
+    font-size: 1.15rem;
+    margin-top: 2.25rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  code {
+    background: var(--code-bg);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  ul { padding-left: 1.4rem; }
+  li { margin: 0.4rem 0; }
+  .section {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin: 1.25rem 0;
+  }
+  .callout {
+    background: var(--callout-bg);
+    border-left: 3px solid var(--callout-border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 0 0 1.5rem 0;
+  }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child { margin-bottom: 0; }
+  .warn {
+    background: var(--warn-bg);
+    border-left: 3px solid var(--warn-border);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0;
+  }
+  .warn p:first-child { margin-top: 0; }
+  .warn p:last-child { margin-bottom: 0; }
+  .warn strong.tag {
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    color: var(--warn-border);
+    display: block;
+    margin-bottom: 0.3rem;
+  }
+  ol.buildorder { padding-left: 1.4rem; }
+  ol.buildorder li { margin: 0.6rem 0; }
+  .stepnum {
+    display: inline-block;
+    background: var(--step-num-bg);
+    color: var(--step-num-fg);
+    border-radius: 50%;
+    width: 1.6rem;
+    height: 1.6rem;
+    text-align: center;
+    line-height: 1.6rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-right: 0.5rem;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Implementation Outline: On-Demand Single-Pairing Min-Day Calculation</h1>
+<p class="subtitle">Option 1 from mindaycalc-single-pairing-options.md &mdash; a new public single-pairing entry point in <code>MinDayProcess</code>, called in-process from PairingInspect.</p>
+
+<div class="callout">
+<p><strong>Decision:</strong> the read-only boundary concern is accepted &mdash; <code>CTSecurityProfile</code> will enforce any relevant security on the write itself (pending tests once implemented). Since <code>MinDayProcess.dll</code> is shared by <code>PSAMinDay</code> (tray app) and <code>PSAMinDayCalcService</code> (Windows service), any change to it ships to all three consumers simultaneously the next time each is rebuilt &mdash; the additive new method is zero-risk to the other two; the one refactor below touches code they already depend on and needs care.</p>
+</div>
+
+<h2>1. New entry point in <code>MinDayProcess</code></h2>
+<div class="section">
+<p>Add: <code>public bool ProcessSinglePairing(string prgNo, string prgDate)</code> (<code>D:\data\vs\PSAMinDayCalc\MinDayProcess\MinDayProcess.cs</code>).</p>
+<p><strong>Why it's not a one-line wrapper around the existing <code>ProcessPairing</code>:</strong></p>
+<ul>
+  <li><code>ProcessPairing(PMByTimestamp pmts, PairingProcessAction ppAction)</code> is <code>private</code> and its helper methods (<code>BypassAndCreatePXIfNeeded</code>, the mixed ab/RAS/TTA crew checks) don't only use the one <code>pmts</code> row passed in &mdash; they query the class-level <code>pmtss.List</code> filtered by <code>PairingID</code>/<code>PairingDate</code>, because a single pairing can have multiple <code>PMByTimestamp</code> rows (one per assigned crew position). <code>pmtss.List</code> today is only ever populated by <code>CTPMTimestamps.FillByLatestUpdate(date, time)</code> &mdash; a time-window query, not a fetch-by-pairing query. The new entry point must fully populate <code>pmtss.List</code> with <em>every</em> PM row for the target pairing before calling <code>ProcessPairing</code>, not synthesize a single row.</li>
+</ul>
+<div class="warn">
+  <strong class="tag">Correctness issue found in the existing code</strong>
+  <p><code>ProcessPairing</code> unconditionally calls <code>SavePMUserSettings(pmts.Update_Date, pmts.Update_Time)</code> at its top whenever <code>ppAction == EvalupateAndUpdate</code> &mdash; that's what advances and persists the batch cursor (<code>MinDayProcess.json</code>). Calling <code>ProcessPairing</code> as-is from the new entry point would let an on-demand click <strong>silently move the scheduled batch's cursor forward</strong>, potentially causing the next tray-app/service run to skip other pairings modified in between.</p>
+  <p><strong>Fix:</strong> split <code>ProcessPairing</code> so the cursor-advance is the <em>caller's</em> responsibility &mdash; only <code>ProcessPM</code> (the batch path) should still call <code>SavePMUserSettings</code>. The on-demand path must never touch <code>MinDayProcess.json</code>.</p>
+</div>
+<p><strong>Open design question:</strong> the batch path also runs <code>AddCrewToEvalList</code> + <code>EvaluateSkeds()</code> afterward (recomputes affected crew's monthly schedule stats). Decide whether the on-demand path should do this too (more correct, but adds real runtime and touches <code>EvalMS</code>/<code>ctmss</code>) or defer it to the next scheduled batch pass (simpler &mdash; "just fix this one pairing's PM row now").</p>
+</div>
+
+<h2>2. New data-access query</h2>
+<div class="section">
+<p><code>CTPMTimestamps</code> (<code>D:\data\vs\CTDataAccess\CTPMTimestamp.cs</code>) needs a <code>FillByPairing(prgNo, prgDate)</code> counterpart to its existing <code>FillByLatestUpdate(date, time)</code> &mdash; same shape (a new TableAdapter query against the same <code>PMByTimestamp</code> source, filtered by pairing instead of by update-timestamp window). This lives in the <code>SFICTDataAccess</code> repo, separate from <code>MinDayProcess</code>.</p>
+</div>
+
+<h2>3. PairingInspect-side wiring</h2>
+<div class="section">
+<ul>
+  <li>Reference <code>MinDayProcess.csproj</code>/<code>MinDayProcess.dll</code> from <code>PairingInspect.csproj</code>.</li>
+  <li><code>btnRecalculateMinDay_Click</code>: construct <code>new MinDayProcess()</code> (non-trivial constructor &mdash; security profile, bid periods, config &mdash; wrap in try/catch, surface failures via <code>RadMessageBox</code>, same pattern as <code>LaunchCtwpm</code>), call <code>ProcessSinglePairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate)</code>, then re-run the existing lookup (<code>DisplayHeader</code>/<code>PopulateGrid</code>) so the button/status/grid immediately reflect the new marker and credit values without the user re-typing the pairing.</li>
+  <li>Confirm before firing &mdash; this is now a genuine write, one click away from a real DB update, so a <code>RadMessageBox</code> confirmation makes sense.</li>
+</ul>
+</div>
+
+<h2>4. Prerequisite fix: <code>CTSecurityProfile.bin</code> path</h2>
+<div class="section">
+<p><code>CTSecurity.GetSavedSecurityProfile()</code> (<code>D:\data\vs\SFIConfigUtils\CTSecurity.cs:114</code>) opens <code>"CTSecurityProfile.bin"</code> as a <strong>relative</strong> path &mdash; works today only because <code>PSAMinDay.exe</code>/the service run with <code>D:\SFI\EXE</code> as their working directory. PairingInspect runs from <code>D:\data\vs\psamindaycalc\...\bin\Debug</code>, so this needs either an overload taking an explicit directory, or config-driven resolution (same pattern already used for <code>ctwpm.exe</code>'s path via <code>CTEXEDIR</code>). This has to be sorted out before <code>new MinDayProcess()</code> will even construct successfully from PairingInspect.</p>
+</div>
+
+<h2>5. Shared-DLL risk and testing</h2>
+<div class="section">
+<ul>
+  <li>The new <code>ProcessSinglePairing</code> method is purely additive &mdash; zero risk to <code>PSAMinDay</code>/<code>PSAMinDayCalcService</code>, since they'll simply never call it.</li>
+  <li>The <em>refactor</em> of <code>ProcessPairing</code> (splitting out the cursor-advance) is the one change that touches code the other two consumers already depend on. It needs to leave the batch path's behavior provably identical &mdash; verify against the existing "Credit/Pay Discrepancy Test" regression script already in this repo before either consumer picks up the new DLL build.</li>
+</ul>
+</div>
+
+<h2>Suggested build order</h2>
+<div class="section">
+<ol class="buildorder">
+  <li><span class="stepnum">1</span><code>CTPMTimestamps.FillByPairing</code> (data access) &mdash; small, isolated, testable on its own.</li>
+  <li><span class="stepnum">2</span><code>MinDayProcess</code> refactor (extract cursor-advance out of <code>ProcessPairing</code>) + new <code>ProcessSinglePairing</code> &mdash; verify the batch path is unaffected via the regression script.</li>
+  <li><span class="stepnum">3</span><code>CTSecurityProfile.bin</code> path fix &mdash; needed before PairingInspect can construct <code>MinDayProcess</code> at all.</li>
+  <li><span class="stepnum">4</span>PairingInspect wiring (<code>btnRecalculateMinDay_Click</code>) &mdash; the highest-visibility piece, but depends on all three above.</li>
+</ol>
+</div>
+
+</div>
+</body>
+</html>

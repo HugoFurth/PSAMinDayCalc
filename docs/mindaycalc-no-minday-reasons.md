@@ -54,18 +54,28 @@ shared `ProcessPairing(string, string, ppAction)` logic.
 
 ## Bypassed instead of updated, based on crew status (`BypassAndCreatePXIfNeeded`)
 
+**Important caveat on #9-11 below**: each of these bypass outcomes is only
+honored when `iLayoverPay == 0` (no multiday layover pay owed). If a pairing
+also has layover pay due, the bypass/PX condition is overridden and
+processing falls through to the real update anyway — layover pay is a
+separate financial obligation the code won't skip just because a crew-status
+bypass or an empty duty list would otherwise apply (`:295, :324`).
+
 9. **All assigned crew already have an excuse** — every crew member with an
    absence code, or `AssignCode` RAS/TTA (at 210) / RAS (at 240) — bypassed as
-   "not applicable," no PX.
+   "not applicable," no PX. (Overridden if `iLayoverPay != 0` — see caveat above.)
 10. **Mixed clean/excused crew** — some crew have ab/RAS/TTA (210) or RAS
     (240) and others don't — a PX is created instead, and the pairing is
-    marked "not applicable" rather than updated.
+    marked "not applicable" rather than updated. (Overridden if
+    `iLayoverPay != 0` — see caveat above.)
 
 ## After a condition is found
 
 11. **Nothing survives the filtering above and no layover pay** —
     `ModDutiesList` ends up empty with `iLayoverPay == 0` → bypassed as "not
-    applicable" (`:324-328`).
+    applicable" (`:324-328`). If `iLayoverPay != 0`, this doesn't apply either
+    — the pairing still gets processed for the layover pay alone, even with an
+    empty `ModDutiesList`.
 12. **The actual DB write throws** — `UpdateDutyCreditsAndPay` fails; marked
     `MINDAY_EXCEPTION`, nothing written (`:313-321`).
 13. **Caller passes `PairingProcessAction.EvaluateOnly`** — even when a real

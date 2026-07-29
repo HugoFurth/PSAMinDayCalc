@@ -347,8 +347,8 @@ git commit -m "Add MarkMSExamined for MinDayCalc MS examination markers"
 - Consumes: `CTPairing.MarkPMExamined(String PrgID, String PrgDate, uint MarkerEmpNo)`
   (Task 2).
 - Produces: three `public const uint` marker fields on `MinDayProcess`
-  (`MARKER_UPDATED`, `MARKER_NO_UPDATE_NEEDED`, `MARKER_EXCEPTION`) — Task 5
-  reuses `MARKER_UPDATED` and `MARKER_EXCEPTION`.
+  (`MINDAY_UPDATED`, `MINDAY_NO_UPDATE_NEEDED`, `MINDAY_EXCEPTION`) — Task 5
+  reuses `MINDAY_UPDATED` and `MINDAY_EXCEPTION`.
 
 - [ ] **Step 1: Add the marker constants**
 
@@ -359,9 +359,9 @@ In `MinDayProcess.cs`, immediately after the existing credit constants
         public Int16 MINDAYCREDIT;
         public const Int16 MINDAYCREDIT35HR = 210;
         public const Int16 MINDAYCREDIT4HR = 240;
-        public const uint MARKER_UPDATED = 99901;
-        public const uint MARKER_NO_UPDATE_NEEDED = 99902;
-        public const uint MARKER_EXCEPTION = 99903;
+        public const uint MINDAY_UPDATED = 99901;
+        public const uint MINDAY_NO_UPDATE_NEEDED = 99902;
+        public const uint MINDAY_EXCEPTION = 99903;
 ```
 
 - [ ] **Step 2: Add the `MarkPMExaminedSafely` helper**
@@ -409,7 +409,7 @@ with:
                 if (ppAction == PairingProcessAction.EvalupateAndUpdate)
                     {
                     CreatePX(pmts);
-                    MarkPMExaminedSafely(pmts, MARKER_NO_UPDATE_NEEDED);
+                    MarkPMExaminedSafely(pmts, MINDAY_NO_UPDATE_NEEDED);
                     }
                 return false; // pairing does not need to be evaluated
                 }
@@ -468,7 +468,7 @@ with:
                 if ((AllTrueDuties.Count(z => z.ActCredit < MINDAYCREDIT) == 0 && AllTrueDuties.Count(z => z.ActPay < MINDAYCREDIT) == 0) && iLayoverPay == 0)
                     {
                     Bypassed = true;
-                    ExaminationMarker = MARKER_NO_UPDATE_NEEDED;
+                    ExaminationMarker = MINDAY_NO_UPDATE_NEEDED;
                     }
                 else // prg contains in a min day condition
                     {
@@ -478,7 +478,7 @@ with:
                         if (BypassAndCreatePXIfNeeded(pmts,ppAction) && iLayoverPay == 0)
                             {
                             Bypassed = true;
-                            ExaminationMarker = MARKER_NO_UPDATE_NEEDED;
+                            ExaminationMarker = MINDAY_NO_UPDATE_NEEDED;
                             }
                         if (!Bypassed)
                             {
@@ -488,7 +488,7 @@ with:
                                     UpdateStatus(MinDayStatus.DetailedInfo, "Update started");
                                     prg.UpdateDutyCreditsAndPay(AllTrueDuties, ModDutiesList, MINDAYCREDIT, LayoverDutyList, pmts.PilotCount, pmts.FACount);
                                     UpdateStatus(MinDayStatus.DetailedInfo, "Update completed");
-                                    ExaminationMarker = MARKER_UPDATED;
+                                    ExaminationMarker = MINDAY_UPDATED;
                                     }
                                 }
                             catch (Exception ee)
@@ -498,14 +498,14 @@ with:
                                     InnerMess = " / " + ee.InnerException.Message;
                                 UpdateStatus(MinDayStatus.Critical, "Update aborted for " + pmts.PairingID + " " + pmts.PairingDate + " - " + ee.Message + InnerMess);
                                 Bypassed = true;
-                                ExaminationMarker = MARKER_EXCEPTION;
+                                ExaminationMarker = MINDAY_EXCEPTION;
                                 }
                             }
                         }
                     else
                         {
                         Bypassed = true;
-                        ExaminationMarker = MARKER_NO_UPDATE_NEEDED;
+                        ExaminationMarker = MINDAY_NO_UPDATE_NEEDED;
                         }
                 //       } 27MAR20
                     }
@@ -587,7 +587,7 @@ git commit -m "Wire PM examination markers into ProcessPairing"
 
 **Interfaces:**
 - Consumes: `CTPairing.MarkMSExamined(uint EmpNum, String BidPeriod, uint MarkerEmpNo)`
-  (Task 3); `MARKER_UPDATED`, `MARKER_EXCEPTION` (Task 4, Step 1).
+  (Task 3); `MINDAY_UPDATED`, `MINDAY_EXCEPTION` (Task 4, Step 1).
 - Produces: nothing new consumed elsewhere — this is the last wiring task.
 
 - [ ] **Step 1: Add the `MarkMSExaminedSafely` helper**
@@ -638,12 +638,12 @@ with:
                     if (bEval)
                         {
                         UpdateStatus(MinDayStatus.Info, "Evaluated crewmember: " + EmpNum + " for " + MMMYYBP);
-                        MarkMSExaminedSafely(ev, MARKER_UPDATED);
+                        MarkMSExaminedSafely(ev, MINDAY_UPDATED);
                         }
                     else
                         {
                         UpdateStatus(MinDayStatus.Critical, "Error evaluating crewmember: " + EmpNum + " for " + MMMYYBP + "<" + EvalMS.LastErrorMsg + ">");
-                        MarkMSExaminedSafely(ev, MARKER_EXCEPTION);
+                        MarkMSExaminedSafely(ev, MINDAY_EXCEPTION);
                         }
                     }
                 catch (Exception ee)
@@ -652,7 +652,7 @@ with:
                     if (ee.InnerException != null)
                         InnerMess = " / " + ee.InnerException.Message;
                     UpdateStatus(MinDayStatus.Critical, "Exception evaluating crewmember <" + ee.Message + InnerMess + ">");
-                    MarkMSExaminedSafely(ev, MARKER_EXCEPTION);
+                    MarkMSExaminedSafely(ev, MINDAY_EXCEPTION);
                     }
                 }
 ```
@@ -707,5 +707,5 @@ git commit -m "Wire MS examination markers into EvaluateSkeds"
 - **Type consistency:** `MarkPMExamined(String, String, uint)` used
   identically in Task 2 (definition) and Task 4 (call site). `MarkMSExamined(uint, String, uint)`
   used identically in Task 3 (definition) and Task 5 (call site). Marker
-  constants (`MARKER_UPDATED` etc.) defined once in Task 4 Step 1, consumed
+  constants (`MINDAY_UPDATED` etc.) defined once in Task 4 Step 1, consumed
   by both Task 4 and Task 5 without redefinition.

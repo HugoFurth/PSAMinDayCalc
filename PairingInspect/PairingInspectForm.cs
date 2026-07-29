@@ -9,6 +9,7 @@ using System.Windows.Forms;
 using SFIConfigUtils;
 using SFICTDataAccess;
 using SFICTDateTimeUtils;
+using MinDayProcessNS;
 using Telerik.WinControls;
 using Telerik.WinControls.UI;
 
@@ -20,6 +21,9 @@ namespace PairingInspect
 
         CTPairing prg;
         RadGridView grid;
+        Timer securitySessionTimer;
+        MinDayProcess minDayProcess;
+        List<string> minDayCriticalMessages;
 
         public PairingInspectForm()
             {
@@ -28,14 +32,73 @@ namespace PairingInspect
             if (this.DesignMode)
                 return;
             prg = new CTPairing();
+            minDayCriticalMessages = new List<string>();
             SetupGrid();
             SetupLaunchCtwpmButton();
+            SetupSecuritySessionTimer();
             txtPairingID.Text = Properties.Settings.Default.LastPairingID;
             txtPairingDate.Text = PairingDateToDisplay(Properties.Settings.Default.LastPairingDate);
             RefreshRecentComboBox();
 
             if (!string.IsNullOrWhiteSpace(txtPairingID.Text) && !string.IsNullOrWhiteSpace(txtPairingDate.Text))
                 btnLookUp_Click(this, EventArgs.Empty);
+            }
+
+        // CTW.exe force-closes apps it launches directly (WM_CLOSE) when it shuts down,
+        // but also calls CTWSECUR.DLL's ResetSecurity() on shutdown, which clears the
+        // shared cross-process security state every process's loaded copy of the DLL
+        // reads from. Since CTW.exe doesn't launch PairingInspect, it never gets the
+        // WM_CLOSE -- polling RunCheck.OkToRun() is how we notice the second signal instead.
+        private void SetupSecuritySessionTimer()
+            {
+            securitySessionTimer = new Timer();
+            securitySessionTimer.Interval = 5000;
+            securitySessionTimer.Tick += SecuritySessionTimer_Tick;
+            securitySessionTimer.Start();
+            }
+
+        private void SecuritySessionTimer_Tick(object sender, EventArgs e)
+            {
+            bool sessionStillValid;
+            try
+                {
+                sessionStillValid = CTSecurity.UserID() != 0;
+                }
+            catch (Exception)
+                {
+                sessionStillValid = false;
+                }
+
+            if (!sessionStillValid)
+                {
+                securitySessionTimer.Stop();
+                this.Close();
+                }
+            }
+
+        // Created on first use rather than in the constructor -- setup (bid periods,
+        // config/marker loading) is non-trivial and not every session ends up
+        // recalculating a min day. One instance lives for the rest of the form's
+        // lifetime; the security session timer above closes the form the moment
+        // CrewTrac logs out, so userID can't go stale underneath it.
+        private MinDayProcess GetMinDayProcess()
+            {
+            if (minDayProcess == null)
+                {
+                minDayProcess = new MinDayProcess((int)CTSecurity.UserID());
+                minDayProcess.StatusUpdate += MinDayProcess_StatusUpdate;
+                }
+            return minDayProcess;
+            }
+
+        // MinDayProcess can report multiple Critical-level problems in a single call
+        // (e.g. one per crewmember it fails to evaluate), so collect them here rather
+        // than surfacing only the last one -- the caller (btnRecalculateMinDay_Click)
+        // clears this list before each run and shows whatever accumulated afterward.
+        private void MinDayProcess_StatusUpdate(object sender, MinDayStatusEventArgs args)
+            {
+            if (args.Status == MinDayStatus.Critical)
+                minDayCriticalMessages.Add(args.Message);
             }
 
         private void SetupGrid()
@@ -202,6 +265,7 @@ namespace PairingInspect
 
         private void PairingInspectForm_FormClosing(object sender, FormClosingEventArgs e)
             {
+            securitySessionTimer.Stop();
             grid.SaveLayout(GridLayoutPath);
             File.WriteAllText(GridFingerprintPath, GridColumnFingerprint());
             Properties.Settings.Default.LastPairingID = txtPairingID.Text;
@@ -239,7 +303,28 @@ namespace PairingInspect
 
         private void btnRecalculateMinDay_Click(object sender, EventArgs e)
             {
-            // TODO: implement
+            if (prg.PrgHdr == null)
+                return;
+
+            minDayCriticalMessages.Clear();
+            try
+                {
+                GetMinDayProcess().ProcessSinglePairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+
+                // re-run the lookup so the marker/credit values just written reflect
+                // immediately, without the user re-typing the pairing.
+                prg.Assemble(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+                string markerName = MarkerNameResolver.Resolve(prg, prg.PrgHdr.UpdateidUpdempno);
+                DisplayHeader(markerName);
+                PopulateGrid(markerName);
+
+                if (minDayCriticalMessages.Count > 0)
+                    RadMessageBox.Show(string.Join(Environment.NewLine, minDayCriticalMessages), "Min Day Recalculation Problem");
+                }
+            catch (Exception ex)
+                {
+                RadMessageBox.Show("Error recalculating min day: " + ex.Message);
+                }
             }
 
         // RadDropDownButton is used only for its arrow chrome -- its own Items/RadMenuItem popup
@@ -354,6 +439,8 @@ namespace PairingInspect
             lblStatusValue.Text = hdr.Canceled ? "Canceled" : "Active";
             lblCrewTypeValue.Text = CrewTypeDisplay(hdr.CrewType);
             lblCreditStatusValue.Text = CreditStatusDisplay(markerName) + " (empno=" + hdr.UpdateidUpdempno + ")";
+            btnRecalculateMinDay.Text = MarkerNameResolver.IsKnownMarker(hdr.UpdateidUpdempno)
+                ? "Recalculate Min Day" : "Calculate Min Day";
             LayoutHeaderLabels();
             }
 

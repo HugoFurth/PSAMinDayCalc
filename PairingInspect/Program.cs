@@ -10,6 +10,8 @@ namespace PairingInspect
             {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            if (!SFIConfigUtils.RunCheck.OkToRun())
+                return;
             Application.Run(new PairingInspectForm());
             }
         }

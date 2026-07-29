@@ -56,9 +56,10 @@ namespace MinDayProcessNS
         public Int16 MINDAYCREDIT;
         public const Int16 MINDAYCREDIT35HR = 210;
         public const Int16 MINDAYCREDIT4HR = 240;
-        public uint MARKER_UPDATED;
-        public uint MARKER_NO_UPDATE_NEEDED;
-        public uint MARKER_EXCEPTION;
+        public uint MINDAY_UPDATED;
+        public uint MINDAY_NO_UPDATE_NEEDED;
+        public uint MINDAY_EXCEPTION;
+        public uint MINDAY_ERROR;
         public event PairingProcessDelegate PairingProcess;
         public event MinDayStatusDelegate StatusUpdate;
         CTPMTimestamps pmtss;
@@ -70,7 +71,7 @@ namespace MinDayProcessNS
         public CTBidPeriods bps;
         public EvaluateMS EvalMS;
         public CTMSs ctmss;
-        TCTSecurityItem ReadSec;
+        int _userID;
 
         String _PMAfterDate;
         String _PMAfterTime;
@@ -79,9 +80,16 @@ namespace MinDayProcessNS
         string[] _ExcludeableCodes;
         public SFICTDataAccess.CTDataSetTableAdapters.MSTableAdapter msTableAdapter;
 
-        public MinDayProcess()
+        public MinDayProcess() : this(CTSecurity.GetSavedSecurityProfile().iUserID)
+            {
+            }
+
+        public MinDayProcess(int userID)
             {
             try {
+                if (userID == 0)
+                    throw new Exception("Insufficient security privilege");
+                _userID = userID;
                 pmtss = new CTPMTimestamps();
                 abtss = new CTABTimestamps();
                 ctpes = new CTPEs();
@@ -92,18 +100,16 @@ namespace MinDayProcessNS
                 (bps = new CTBidPeriods()).Fill("1001");
                 EvalMS = new EvaluateMS();
                 ctmss = new CTMSs();
-                ReadSec = CTSecurity.GetSavedSecurityProfile();
-                if (ReadSec.iUserID == 0)
-                    throw new Exception("Insufficient security privilege");
                 SFIConfigUtils.AssemblyConfig.SetAppConfig(Assembly.GetExecutingAssembly().Location, Assembly.GetExecutingAssembly().GetName().Name);
                 String ExcludeableCodesToLoadProp;
                 if (!SFIConfigUtils.AssemblyConfig.Settings.TryGetValue("ExcludeableCodes", out ExcludeableCodesToLoadProp))
                     throw new Exception("ExcludeableCodes not set");
                 _ExcludeableCodes = ExcludeableCodesToLoadProp.Split(';');
 
-                MARKER_UPDATED = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerUpdated"));
-                MARKER_NO_UPDATE_NEEDED = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerNoUpdateNeeded"));
-                MARKER_EXCEPTION = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerException"));
+                MINDAY_UPDATED = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerUpdated"));
+                MINDAY_NO_UPDATE_NEEDED = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerNoUpdateNeeded"));
+                MINDAY_EXCEPTION = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerException"));
+                MINDAY_ERROR = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerError"));
                 }
             catch (Exception)
                 {
@@ -149,7 +155,7 @@ namespace MinDayProcessNS
                     continue;
 
                 if (ProcessPairing(pmts,PairingProcessAction.EvalupateAndUpdate)) // if true, pairing was updated so eval all crew with this pairing on their sked
-                    AddCrewToEvalList(pmts);
+                    AddCrewToEvalList(pmts.PairingID, pmts.PairingDate);
                     
                 ProccessedPrgs.List.Add(new ProcessedPairing(pmts.PairingID, pmts.PairingDate));
                 }
@@ -193,124 +199,159 @@ namespace MinDayProcessNS
             ProcessAB();
             }
 
+        // On-demand counterpart to ProcessPM's batch loop, scoped to one pairing (e.g. from
+        // PairingInspect's "Recalculate Min Day" button). Never touches MinDayProcess.json's
+        // batch cursor -- ProcessPairing(string,string,ppAction) below doesn't advance it,
+        // only the PMByTimestamp overload used by the batch path does.
+        public bool ProcessSinglePairing(string prgNo, string prgDate)
+            {
+            EvalSkeds.Queue.Clear();
+
+            CTPMMP pmmp = new CTPMMP();
+            pmmp.FillByPairing(prgNo, prgDate);
+            pmtss.List.Clear();
+            pmtss.List.AddRange(pmmp.List);
+
+            bool needsEval = ProcessPairing(prgNo, prgDate, PairingProcessAction.EvalupateAndUpdate);
+            if (needsEval)
+                AddCrewToEvalList(prgNo, prgDate);
+
+            EvaluateSkeds();
+            return needsEval;
+            }
 
         private void ProcessQueueForCrewPost(ABByTimestamp abts)
             {
             SaveABUserSettings(abts.Update_Date, abts.Update_Time.ToString());
             DateTime InsDateTime = DateTime.Now;
             if (!(ctpes.DoesEvaluateExist(abts.PairingID,abts.PairingDate)))
-                ctpes.Insert(abts.PairingID, abts.PairingDate, (uint)ReadSec.iUserID, SFICTDateTimeUtils.CTDateFormat.CTInternal(InsDateTime),(int) InsDateTime.TimeOfDay.TotalMilliseconds);
+                ctpes.Insert(abts.PairingID, abts.PairingDate, (uint)_userID, SFICTDateTimeUtils.CTDateFormat.CTInternal(InsDateTime),(int) InsDateTime.TimeOfDay.TotalMilliseconds);
             } 
 
+        // Batch cursor-advance stays here, on the timestamp-driven overload only -- it must
+        // never run for an on-demand single-pairing call, since this is what persists
+        // MinDayProcess.json's "last processed" position for the scheduled batch.
         private bool ProcessPairing(PMByTimestamp pmts, PairingProcessAction ppAction)
             {
             if (ppAction == PairingProcessAction.EvalupateAndUpdate)
                 SavePMUserSettings(pmts.Update_Date,pmts.Update_Time.ToString());
+            return ProcessPairing(pmts.PairingID, pmts.PairingDate, ppAction);
+            }
+
+        public bool ProcessPairing(string prgID, string prgDate, PairingProcessAction ppAction)
+            {
             bool Bypassed = false;
-            uint ExaminationMarker = 0;
+            uint MinDayMarker = 0;
+
+            UpdateStatus(MinDayStatus.DetailedInfo, "Assembling pairing: " + prgID + " " + prgDate);
+            prg.Assemble(prgID, prgDate);
+
+            // Interim rule pending confirmation with the customer: single-duty pairings are
+            // excluded from min day entirely (not just "no condition found"). FillByPSAMinCredit's
+            // batch pre-filter already excludes most of these (its hardcoded actcdt<210 check
+            // doesn't account for the 240/pilot threshold, so it's an imperfect proxy for this
+            // rule); enforcing it here directly makes the on-demand path match, and closes the
+            // gap for batch pairings that slipped through that pre-filter.
+            if (prg.PrgHdr.NumDutyPeriods == 1)
+                {
+                UpdateStatus(MinDayStatus.DetailedInfo, "Single-duty pairing -- min day not applicable");
+                if (ppAction == PairingProcessAction.EvalupateAndUpdate)
+                    MarkPMExaminedSafely(prgID, prgDate, MINDAY_NO_UPDATE_NEEDED);
+                return false;
+                }
 
             // starting on 9/1/2022, mixed pairings no longer allowed
-            if (string.Compare(pmts.PairingDate, "20220901") >= 0 && pmts.PilotCount > 0 && pmts.FACount > 0)
+            if (string.Compare(prgDate, "20220901") >= 0 && prg.PrgHdr.CrewType == "B")
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "PX due to mixed pilot/FA crew");
-                prg.Assemble(pmts.PairingID, pmts.PairingDate); // must assemble pairing for exception creation
                 if (ppAction == PairingProcessAction.EvalupateAndUpdate)
                     {
-                    CreatePX(pmts);
-                    MarkPMExaminedSafely(pmts, MARKER_NO_UPDATE_NEEDED);
+                    bool pxCreated = CreatePX(prgID, prgDate);
+                    MarkPMExaminedSafely(prgID, prgDate, pxCreated ? MINDAY_EXCEPTION : MINDAY_ERROR);
                     }
                 return false; // pairing does not need to be evaluated
                 }
 
-            // Min day value is based on start date of pairing. New value used for pilot prgs starting 9/1/2022. Set before doing anything else with the prg.
-            if (string.Compare(pmts.PairingDate, "20220901") >= 0 && pmts.PilotCount > 0 && pmts.FACount == 0)
+            // Min day value is based on start date of pairing. New value used for pilot prgs starting 9/1/2022.
+            if (string.Compare(prgDate, "20220901") >= 0 && prg.PrgHdr.CrewType == "P")
                 MINDAYCREDIT = MINDAYCREDIT4HR;
             else
                 MINDAYCREDIT = MINDAYCREDIT35HR;
 
-
             List<ModDuty> ModDutiesList = new List<ModDuty>();
+            List<PairingDuty> AllTrueDuties = prg.FindAllDuties();
 
-            // 27MAR20 - can no longer use 'Bypass1CrewPairing' because crewmember may qualify for multiday layover pay even if duy period min day does not apply
-            // if (Bypass1CrewPairing(pmts))   // can bypass if a single crewmember only and meets the bypass criteria
-            //    Bypassed = true;
-            // else
-            //  {
-                UpdateStatus(MinDayStatus.DetailedInfo, "Assembling pairing: " + pmts.PairingID + " " + pmts.PairingDate);
-                int iLineCount = prg.Assemble(pmts.PairingID, pmts.PairingDate);
-                //      UpateStatus(MinDayStatus.DetailedInfo, "Lines in pairing: " + iLineCount.ToString());
-                List<PairingDuty> AllTrueDuties = prg.FindAllDuties();
-        
             List<LayoverModDuty> LayoverDutyList = CalcMultiDayLayoverPay(AllTrueDuties);
-                int iLayoverPay = SumOfLayoverPay(LayoverDutyList);
+            int iLayoverPay = SumOfLayoverPay(LayoverDutyList);
 
-                if ((AllTrueDuties.Count(z => z.ActCredit < MINDAYCREDIT) == 0 && AllTrueDuties.Count(z => z.ActPay < MINDAYCREDIT) == 0) && iLayoverPay == 0)
+            if ((AllTrueDuties.Count(z => z.ActCredit < MINDAYCREDIT) == 0 && AllTrueDuties.Count(z => z.ActPay < MINDAYCREDIT) == 0) && iLayoverPay == 0)
+                {
+                Bypassed = true;
+                MinDayMarker = MINDAY_NO_UPDATE_NEEDED;
+                }
+            else // prg contains a min day condition
+                {
+                ModDutiesList = CreateModDutiesList(AllTrueDuties);
+                if (ModDutiesList.Count > 0 || iLayoverPay > 0)
                     {
-                    Bypassed = true;
-                    ExaminationMarker = MARKER_NO_UPDATE_NEEDED;
-                    }
-                else // prg contains in a min day condition
-                    {
-                    ModDutiesList = CreateModDutiesList(AllTrueDuties);
-                    if (ModDutiesList.Count > 0 || iLayoverPay > 0)
-                        {
-                        if (BypassAndCreatePXIfNeeded(pmts,ppAction) && iLayoverPay == 0)
-                            {
-                            Bypassed = true;
-                            ExaminationMarker = MARKER_NO_UPDATE_NEEDED;
-                            }
-                        if (!Bypassed)
-                            {
-                            try {
-                                if (ppAction == PairingProcessAction.EvalupateAndUpdate)
-                                    {
-                                    UpdateStatus(MinDayStatus.DetailedInfo, "Update started");
-                                    prg.UpdateDutyCreditsAndPay(AllTrueDuties, ModDutiesList, MINDAYCREDIT, LayoverDutyList, pmts.PilotCount, pmts.FACount);
-                                    UpdateStatus(MinDayStatus.DetailedInfo, "Update completed");
-                                    ExaminationMarker = MARKER_UPDATED;
-                                    }
-                                }
-                            catch (Exception ee)
-                                {
-                                String InnerMess= "";
-                                if (ee.InnerException != null)
-                                    InnerMess = " / " + ee.InnerException.Message;
-                                UpdateStatus(MinDayStatus.Critical, "Update aborted for " + pmts.PairingID + " " + pmts.PairingDate + " - " + ee.Message + InnerMess);
-                                Bypassed = true;
-                                ExaminationMarker = MARKER_EXCEPTION;
-                                }
-                            }
-                        }
-                    else
+                    uint bypassMarker = BypassAndCreatePXIfNeeded(prgID, prgDate, ppAction);
+                    if (bypassMarker != 0 && iLayoverPay == 0)
                         {
                         Bypassed = true;
-                        ExaminationMarker = MARKER_NO_UPDATE_NEEDED;
+                        MinDayMarker = bypassMarker;
                         }
-                //       } 27MAR20
+                    if (!Bypassed)
+                        {
+                        try {
+                            if (ppAction == PairingProcessAction.EvalupateAndUpdate)
+                                {
+                                UpdateStatus(MinDayStatus.DetailedInfo, "Update started");
+                                short pilotFlag = (short)(prg.PrgHdr.CrewType == "P" ? 1 : 0);
+                                short faFlag = (short)(prg.PrgHdr.CrewType == "C" ? 1 : 0);
+                                prg.UpdateDutyCreditsAndPay(AllTrueDuties, ModDutiesList, MINDAYCREDIT, LayoverDutyList, pilotFlag, faFlag);
+                                UpdateStatus(MinDayStatus.DetailedInfo, "Update completed");
+                                MinDayMarker = MINDAY_UPDATED;
+                                }
+                            }
+                        catch (Exception ee)
+                            {
+                            String InnerMess= "";
+                            if (ee.InnerException != null)
+                                InnerMess = " / " + ee.InnerException.Message;
+                            UpdateStatus(MinDayStatus.Critical, "Update aborted for " + prgID + " " + prgDate + " - " + ee.Message + InnerMess);
+                            Bypassed = true;
+                            MinDayMarker = MINDAY_ERROR;
+                            }
+                        }
+                    }
+                else
+                    {
+                    Bypassed = true;
+                    MinDayMarker = MINDAY_NO_UPDATE_NEEDED;
+                    }
                 }
 
-            if (ppAction == PairingProcessAction.EvalupateAndUpdate && ExaminationMarker != 0)
-                MarkPMExaminedSafely(pmts, ExaminationMarker);
+            if (ppAction == PairingProcessAction.EvalupateAndUpdate && MinDayMarker != 0)
+                MarkPMExaminedSafely(prgID, prgDate, MinDayMarker);
 
             ReadOnlyCollection<int> ModDutiesIntList = new ReadOnlyCollection<int>(ModDutiesList.ConvertAll(x => x.DutyPeriod));
-   //         ModDutiesIntList = ModDutiesIntList.Distinct().ToList();
 
-            PairingProcessInfoEventArgs Args = new PairingProcessInfoEventArgs(Bypassed, pmts.PairingID, pmts.PairingDate, ModDutiesIntList);
+            PairingProcessInfoEventArgs Args = new PairingProcessInfoEventArgs(Bypassed, prgID, prgDate, ModDutiesIntList);
             OnProcess(Args);
             return !Bypassed ; // true if sked needs to be evaluated
             }
 
-        private void MarkPMExaminedSafely(PMByTimestamp pmts, uint MarkerEmpNo)
+        private void MarkPMExaminedSafely(string prgID, string prgDate, uint MarkerEmpNo)
             {
             try {
-                prg.MarkPMExamined(pmts.PairingID, pmts.PairingDate, MarkerEmpNo);
+                prg.MarkPMExamined(prgID, prgDate, MarkerEmpNo);
                 }
             catch (Exception ee)
                 {
                 String InnerMess = "";
                 if (ee.InnerException != null)
                     InnerMess = " / " + ee.InnerException.Message;
-                UpdateStatus(MinDayStatus.Critical, "Failed to mark PM examined for " + pmts.PairingID + " " + pmts.PairingDate + " - " + ee.Message + InnerMess);
+                UpdateStatus(MinDayStatus.Critical, "Failed to mark PM examined for " + prgID + " " + prgDate + " - " + ee.Message + InnerMess);
                 }
             }
 
@@ -375,10 +416,10 @@ namespace MinDayProcessNS
             }
 
 
-            private void AddCrewToEvalList(PMByTimestamp pmts)
+            private void AddCrewToEvalList(string prgID, string prgDate)
             {
             // find all crew on this pairing and add to the eval queue
-            foreach (PMByTimestamp p in pmtss.List.Where(x => x.EmpNum > 0 &&  x.PairingID == pmts.PairingID && x.PairingDate == pmts.PairingDate).ToList())
+            foreach (PMByTimestamp p in pmtss.List.Where(x => x.EmpNum > 0 &&  x.PairingID == prgID && x.PairingDate == prgDate).ToList())
                 {
                 if (EvalSkeds.Queue.Add(new EvaluateSkedParams(p.EmpNum, bps.FindBPItem(p.BidPeriod))))
                     UpdateStatus(MinDayStatus.Info, "Schedule of crewmember: " + p.EmpNum + " for " + p.BidPeriod + " queued for evaluation");
@@ -412,12 +453,12 @@ namespace MinDayProcessNS
                     if (bEval)
                         {
                         UpdateStatus(MinDayStatus.Info, "Evaluated crewmember: " + EmpNum + " for " + MMMYYBP);
-                        MarkMSExaminedSafely(ev, MARKER_UPDATED);
+                        MarkMSExaminedSafely(ev, MINDAY_UPDATED);
                         }
                     else
                         {
                         UpdateStatus(MinDayStatus.Critical, "Error evaluating crewmember: " + EmpNum + " for " + MMMYYBP + "<" + EvalMS.LastErrorMsg + ">");
-                        MarkMSExaminedSafely(ev, MARKER_EXCEPTION);
+                        MarkMSExaminedSafely(ev, MINDAY_EXCEPTION);
                         }
                     }
                 catch (Exception ee)
@@ -426,7 +467,7 @@ namespace MinDayProcessNS
                     if (ee.InnerException != null)
                         InnerMess = " / " + ee.InnerException.Message;
                     UpdateStatus(MinDayStatus.Critical, "Exception evaluating crewmember <" + ee.Message + InnerMess + ">");
-                    MarkMSExaminedSafely(ev, MARKER_EXCEPTION);
+                    MarkMSExaminedSafely(ev, MINDAY_EXCEPTION);
                     }
                 }
 
@@ -485,7 +526,11 @@ namespace MinDayProcessNS
             return false;
             }
 
-        private bool BypassAndCreatePXIfNeeded(PMByTimestamp pmts, PairingProcessAction ppAction)
+        // Returns MINDAY_EXCEPTION (a PX was created, or would be but ppAction is
+        // EvaluateOnly), MINDAY_ERROR (a PX creation was attempted and failed),
+        // MINDAY_NO_UPDATE_NEEDED (all crew already excused, no PX needed), or 0
+        // (no bypass condition applies -- caller should proceed to the real update).
+        private uint BypassAndCreatePXIfNeeded(string prgID, string prgDate, PairingProcessAction ppAction)
             {
             // px for any FA on a trip with a duty under 3:30
 
@@ -499,64 +544,68 @@ namespace MinDayProcessNS
                 */
 
             //
-                 
+
             // if pairing is assigned to one or more crew and has ab/RAS/TTA *AND* if pairing is assigned to one or more crew without ab/RAS/TTA, make a PX
-            if (MINDAYCREDIT == MINDAYCREDIT35HR && 
-                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && 
-                              (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA")) 
-                               && 
-                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && 
+            if (MINDAYCREDIT == MINDAYCREDIT35HR &&
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == prgID && w.PairingDate == prgDate &&
+                              (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA"))
+                               &&
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == prgID && w.PairingDate == prgDate &&
                               (w.AbsenceCode == null && w.AssignCode != "RAS" && w.AssignCode != "TTA")))
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "PX due to mixed ab/RAS/TTA crew");
                 if (ppAction == PairingProcessAction.EvalupateAndUpdate)
-                    CreatePX(pmts);
-                return true;
+                    return CreatePX(prgID, prgDate) ? MINDAY_EXCEPTION : MINDAY_ERROR;
+                return MINDAY_EXCEPTION;
                 }
 
             // if pairing is assigned to one or more crew and has RAS *AND* if pairing is assigned to one or more crew without RAS, make a PX
-            if (MINDAYCREDIT == MINDAYCREDIT4HR && 
-                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && 
-                               w.PairingDate == pmts.PairingDate && w.AssignCode == "RAS")
+            if (MINDAYCREDIT == MINDAYCREDIT4HR &&
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == prgID &&
+                               w.PairingDate == prgDate && w.AssignCode == "RAS")
                                &&
-                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && 
-                               w.PairingDate == pmts.PairingDate && w.AssignCode != "RAS"))
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == prgID &&
+                               w.PairingDate == prgDate && w.AssignCode != "RAS"))
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "PX due to mixed RAS crew");
-                CreatePX(pmts);
-                return true;
+                if (ppAction == PairingProcessAction.EvalupateAndUpdate)
+                    return CreatePX(prgID, prgDate) ? MINDAY_EXCEPTION : MINDAY_ERROR;
+                return MINDAY_EXCEPTION;
                 }
 
-            // if we reach here we don't need a px because there is not a mix of pilots assigned with and without ab/RAS/TTA. Only have assigned pilots + possibly open. 
+            // if we reach here we don't need a px because there is not a mix of pilots assigned with and without ab/RAS/TTA. Only have assigned pilots + possibly open.
             // either way, skip processing
-            if (MINDAYCREDIT == MINDAYCREDIT35HR && 
-                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && 
+            if (MINDAYCREDIT == MINDAYCREDIT35HR &&
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == prgID && w.PairingDate == prgDate &&
                               (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA")))
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "Pairing bypassed due to all crew ab/RAS/TTA");
-                return true;
+                return MINDAY_NO_UPDATE_NEEDED;
                 }
-            if (MINDAYCREDIT == MINDAYCREDIT4HR && 
-                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == pmts.PairingID && w.PairingDate == pmts.PairingDate && 
+            if (MINDAYCREDIT == MINDAYCREDIT4HR &&
+                pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == prgID && w.PairingDate == prgDate &&
                                w.AssignCode == "RAS"))
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "Pairing bypassed due to all crew RAS");
-                return true;
+                return MINDAY_NO_UPDATE_NEEDED;
                 }
 
-            return false;
+            return 0;
             }
 
-        private void CreatePX(PMByTimestamp pmts)
+        private bool CreatePX(string prgID, string prgDate)
             {
             try {
                 PairingDuty pdlast = prg.FindAllDuties().Find(s => s.DutyPeriod == prg.NumDuties);
 
-                int i = prg.InsertException(prg.PrgHdr.PrgID,prg.PrgHdr.PrgDate,pdlast.Report,pdlast.ActEnd,6500,ReadSec.iUserID);
+                int i = prg.InsertException(prg.PrgHdr.PrgID,prg.PrgHdr.PrgDate,pdlast.Report,pdlast.ActEnd,6500,_userID);
                 if (i == 1)
-                    UpdateStatus(MinDayStatus.DetailedInfo, "PX created for " + pmts.PairingID + " " + pmts.PairingDate);
-                else
-                    UpdateStatus(MinDayStatus.Critical, "Failed to create PX for " + pmts.PairingID + " " + pmts.PairingDate);
+                    {
+                    UpdateStatus(MinDayStatus.DetailedInfo, "PX created for " + prgID + " " + prgDate);
+                    return true;
+                    }
+                UpdateStatus(MinDayStatus.Critical, "Failed to create PX for " + prgID + " " + prgDate);
+                return false;
                 }
             catch (Exception ee)
                 {
@@ -564,6 +613,7 @@ namespace MinDayProcessNS
                 if (ee.InnerException != null)
                     InnerMess = " / " + ee.InnerException.Message;
                 UpdateStatus(MinDayStatus.Critical, "PX creation aborted - " + ee.Message + InnerMess);
+                return false;
                 }
             }
 

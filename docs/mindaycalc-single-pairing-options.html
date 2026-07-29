@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Min-Day Calculator Integration Options for PairingInspect</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #5a5a5a;
+    --border: #e0e0e0;
+    --code-bg: #f3f3f3;
+    --pro-bg: #eefaf0;
+    --pro-border: #3aa35a;
+    --con-bg: #fdeeee;
+    --con-border: #c0392b;
+    --callout-bg: #f0f4fb;
+    --callout-border: #3b5bdb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1d21;
+      --fg: #e8e8e8;
+      --muted: #a0a0a0;
+      --border: #3a3d42;
+      --code-bg: #2a2d32;
+      --pro-bg: #16281c;
+      --pro-border: #3aa35a;
+      --con-bg: #2c1a1a;
+      --con-border: #d9645a;
+      --callout-bg: #1b2436;
+      --callout-border: #6a8aec;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 5rem;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .page {
+    max-width: 780px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 1.6rem;
+    margin-bottom: 0.25rem;
+  }
+  .subtitle {
+    color: var(--muted);
+    margin-top: 0;
+    margin-bottom: 2rem;
+    font-size: 0.95rem;
+  }
+  h2 {
+    font-size: 1.2rem;
+    margin-top: 2.5rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 {
+    font-size: 1.05rem;
+    margin-top: 1.5rem;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  ul {
+    padding-left: 1.4rem;
+  }
+  li { margin: 0.35rem 0; }
+  .option {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin: 1.25rem 0;
+  }
+  .prosCons {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+  @media (min-width: 620px) {
+    .prosCons { grid-template-columns: 1fr 1fr; }
+  }
+  .pros, .cons {
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+  }
+  .pros {
+    background: var(--pro-bg);
+    border-left: 3px solid var(--pro-border);
+  }
+  .cons {
+    background: var(--con-bg);
+    border-left: 3px solid var(--con-border);
+  }
+  .pros h4, .cons h4 {
+    margin: 0 0 0.4rem 0;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .pros ul, .cons ul {
+    margin: 0;
+    padding-left: 1.2rem;
+  }
+  .callout {
+    background: var(--callout-bg);
+    border-left: 3px solid var(--callout-border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1.5rem 0;
+  }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child { margin-bottom: 0; }
+  .findings li { margin: 0.6rem 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Min-Day Calculator Integration Options for PairingInspect</h1>
+<p class="subtitle">How to wire up the "Recalculate Min Day" / "Calculate Min Day" button so it actually triggers a recalculation for the pairing on screen.</p>
+
+<div class="callout">
+<p><strong>Bottom line:</strong> this isn't "wire up the existing thing" — every option below requires writing genuinely new code in <code>MinDayProcess</code> and/or <code>PSAMinDay</code>, because a single-pairing entry point doesn't exist anywhere today.</p>
+</div>
+
+<h2>What exists today (research findings)</h2>
+<ul class="findings">
+  <li><strong><code>MinDayProcess</code></strong> (<code>D:\data\vs\PSAMinDayCalc\MinDayProcess\MinDayProcess.cs</code>, namespace <code>MinDayProcessNS</code>, built to <code>MinDayProcess.dll</code>) has <strong>no public, single-pairing entry point</strong>. <code>ProcessPairing(PMByTimestamp pmts, PairingProcessAction ppAction)</code> is <code>private</code> and takes a pre-fetched row, not a bare <code>PrgNo</code>/<code>PrgDate</code>. The only public API is batch/cursor-driven: <code>Process()</code> loads a JSON cursor (<code>MinDayProcess.json</code>: <code>PMAfterDate/Time</code>, <code>ABAfterDate/Time</code>), calls <code>ProcessPM()</code>/<code>ProcessAB()</code> — which query <strong>everything</strong> modified after that stored timestamp, not a specific pairing — then advances and re-persists the cursor.</li>
+  <li>The constructor requires a full environment: <code>CTSecurity.GetSavedSecurityProfile()</code> (throws if there's no saved security session), <code>SFIConfigUtils.AssemblyConfig</code> app settings, and <code>CTBidPeriods.Fill("1001")</code>. It's not usable standalone without that context, and it's unclear whether <code>GetSavedSecurityProfile()</code> behaves the same for an interactive desktop session as it does for a scheduled service/tray app.</li>
+  <li><strong><code>PSAMinDay.exe</code></strong> (<code>D:\data\vs\PSAMinDayCalc\PSAMinDay</code>) is a headless <code>ApplicationContext</code> tray app: a <code>Timer</code> fires <code>doProcess()</code> → <code>mdp.Process()</code> on an interval. <code>Program.cs.Main()</code> takes no arguments. <code>DetailsForm</code> is a scrollback log viewer, not a pairing-input screen. It calls <code>MinDayProcess</code> directly &mdash; no CLI parsing, no dialog to automate past the way <code>ctwpm.exe</code>'s selection screen was.</li>
+  <li><strong><code>PSAMinDayCalcService</code></strong> (a Windows service) is a second, separate scheduled consumer of the same <code>MinDayProcess</code> library &mdash; also out of scope, also batch-driven.</li>
+  <li>No other tool in this codebase launches <code>PSAMinDay.exe</code> with arguments the way <code>PairingInspect/CtwpmSelectionAutomator.cs</code> launches <code>ctwpm.exe</code> (<code>&lt;FUNCTION&gt; &lt;PrgNo&gt; &lt;PrgDate&gt;</code> + automate past the selection dialog). There's no existing precedent for triggering a single pairing on demand, at any layer.</li>
+  <li>PairingInspect's original design spec explicitly scoped it as <strong>read-only</strong> &mdash; it must never call <code>UpdateDutyCreditsAndPay</code> / <code>MarkPMExamined</code> / <code>MarkMSExamined</code>, and today it only has a hand-mirrored, read-only copy of the floor/marker logic (<code>MinDayDiffCalculator.cs</code>), not a real reference to <code>MinDayProcess</code>.</li>
+</ul>
+
+<h2>Option 1 &mdash; New public single-pairing method in <code>MinDayProcess</code>, called in-process</h2>
+<div class="option">
+<p>Add e.g. <code>ProcessSinglePairing(prgNo, prgDate)</code> to <code>MinDayProcess</code> that fetches the one <code>PMByTimestamp</code> row and calls the existing private <code>ProcessPairing</code> core directly. PairingInspect references <code>MinDayProcess.dll</code> and calls it.</p>
+<div class="prosCons">
+  <div class="pros">
+    <h4>Pros</h4>
+    <ul>
+      <li>Most direct &mdash; no external process, no polling for a result.</li>
+      <li>Reuses the real floor/marker logic instead of <code>MinDayDiffCalculator</code>'s hand-mirrored copy.</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Cons</h4>
+    <ul>
+      <li>Explicitly breaks PairingInspect's declared read-only boundary &mdash; a scope change to the tool's core design principle, not just an implementation detail.</li>
+      <li>Requires PairingInspect to satisfy <code>MinDayProcess</code>'s constructor prerequisites, none of which it currently sets up, and unverified whether the security profile call behaves correctly outside a service/tray-app context.</li>
+      <li>New code lands in a shared library also relied on by the tray app and Windows service &mdash; a mistake here risks unattended, scheduled jobs.</li>
+    </ul>
+  </div>
+</div>
+</div>
+
+<h2>Option 2 &mdash; New CLI mode on <code>PSAMinDay.exe</code> (or a small new executable), launched as a separate process</h2>
+<div class="option">
+<p>PairingInspect launches a process (&agrave; la <code>ctwpm.exe</code>) with the pairing's <code>PrgNo</code>/<code>PrgDate</code>; that process does the one-pairing calculation and exits.</p>
+<div class="prosCons">
+  <div class="pros">
+    <h4>Pros</h4>
+    <ul>
+      <li>PairingInspect itself stays literally read-only &mdash; it only launches a sanctioned external process; the mutation lives in a tool already responsible for this job.</li>
+      <li>Consistent with the existing <code>CtwpmSelectionAutomator</code> precedent already in this codebase.</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Cons</h4>
+    <ul>
+      <li><code>PSAMinDay</code> has no dialog to click-automate the way CTWPM's selection screen does &mdash; the new mode needs to run fully headless, so PairingInspect needs another way to learn whether it succeeded (exit code, tailing a log file, re-querying the marker after the process exits).</li>
+      <li>Still requires writing the same new single-pairing logic somewhere &mdash; this only relocates <em>where</em> the mutation happens, not <em>whether</em> new mutating code gets written.</li>
+    </ul>
+  </div>
+</div>
+</div>
+
+<h2>Option 3 &mdash; No bespoke on-demand path; just shrink the batch latency</h2>
+<div class="option">
+<p>Keep everything batch/cursor-driven. "Calculate Min Day" lowers the tray app's <code>TimerInterval</code> (or nudges its cursor) so the pairing gets picked up on the next (near-immediate) pass instead of getting its own code path.</p>
+<div class="prosCons">
+  <div class="pros">
+    <h4>Pros</h4>
+    <ul>
+      <li>Zero new methods in <code>MinDayProcess</code> &mdash; reuses only well-tested, already-shipped batch logic.</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Cons</h4>
+    <ul>
+      <li>Not really "click and see the result now," which is what the button implies.</li>
+      <li><code>ProcessPM</code>/<code>ProcessAB</code> pull <em>everything</em> modified since the cursor, not one target pairing &mdash; no clean way to scope this without the same new-method work Options 1/2 require, and rewinding the cursor risks reprocessing other already-settled pairings as a side effect.</li>
+    </ul>
+  </div>
+</div>
+</div>
+
+<h2>Recommendation</h2>
+<p>Options 1 and 2 are the real contenders &mdash; Option 3 doesn't deliver what the button implies. The deciding factor is whether PairingInspect is allowed to perform the mutation itself (Option 1 &mdash; simpler, but crosses the exact boundary the original spec drew a hard line against) versus keeping that boundary intact by delegating to a separate process (Option 2 &mdash; more consistent with the CTWPM precedent, but needs a way to report results back without a UI to watch).</p>
+
+</div>
+</body>
+</html>
