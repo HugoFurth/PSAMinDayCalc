@@ -56,10 +56,10 @@ namespace MinDayProcessNS
         public Int16 MINDAYCREDIT;
         public const Int16 MINDAYCREDIT35HR = 210;
         public const Int16 MINDAYCREDIT4HR = 240;
-        public uint MINDAY_UPDATED;
-        public uint MINDAY_NO_UPDATE_NEEDED;
-        public uint MINDAY_EXCEPTION;
-        public uint MINDAY_ERROR;
+        public uint MINDAY_UPDATED_USER;
+        public uint MINDAY_NO_UPDATE_NEEDED_USER;
+        public uint MINDAY_EXCEPTION_USER;
+        public uint MINDAY_ERROR_USER;
         public event PairingProcessDelegate PairingProcess;
         public event MinDayStatusDelegate StatusUpdate;
         CTPMTimestamps pmtss;
@@ -72,6 +72,12 @@ namespace MinDayProcessNS
         public EvaluateMS EvalMS;
         public CTMSs ctmss;
         int _userID;
+        // True for interactive callers (PairingInspect) that supply a userID directly --
+        // they're running under a live CrewTrac session, so EvaluateSkeds can pass live
+        // security straight to EvalMS instead of relying on CTSecurityProfile.bin, which
+        // unattended callers (PSAMinDay/PSAMinDayCalcService) need since they have no
+        // live session to read from.
+        bool _useLiveSecurity;
 
         String _PMAfterDate;
         String _PMAfterTime;
@@ -80,16 +86,39 @@ namespace MinDayProcessNS
         string[] _ExcludeableCodes;
         public SFICTDataAccess.CTDataSetTableAdapters.MSTableAdapter msTableAdapter;
 
-        public MinDayProcess() : this(CTSecurity.GetSavedSecurityProfile().iUserID)
+        public MinDayProcess() : this(CTSecurity.GetSavedSecurityProfile().iUserID, false)
             {
             }
 
-        public MinDayProcess(int userID)
+        public MinDayProcess(int userID) : this(userID, true)
+            {
+            }
+
+        // Config key is the field's own name (e.g. "MINDAY_UPDATED_USER") -- these
+        // are literally TR09 marker user IDs, so the config key and the field it
+        // fills need no separate mapping name. Cached since SFIConfig.AppSettingRaw
+        // re-walks the config section on every call and these values never change
+        // for the life of the process.
+        private static readonly Dictionary<string, uint> _minDayUserCache = new Dictionary<string, uint>();
+
+        private static uint GetMinDayUser(string fieldName)
+            {
+            uint value;
+            if (!_minDayUserCache.TryGetValue(fieldName, out value))
+                {
+                value = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw(fieldName));
+                _minDayUserCache[fieldName] = value;
+                }
+            return value;
+            }
+
+        private MinDayProcess(int userID, bool useLiveSecurity)
             {
             try {
                 if (userID == 0)
                     throw new Exception("Insufficient security privilege");
                 _userID = userID;
+                _useLiveSecurity = useLiveSecurity;
                 pmtss = new CTPMTimestamps();
                 abtss = new CTABTimestamps();
                 ctpes = new CTPEs();
@@ -106,10 +135,10 @@ namespace MinDayProcessNS
                     throw new Exception("ExcludeableCodes not set");
                 _ExcludeableCodes = ExcludeableCodesToLoadProp.Split(';');
 
-                MINDAY_UPDATED = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerUpdated"));
-                MINDAY_NO_UPDATE_NEEDED = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerNoUpdateNeeded"));
-                MINDAY_EXCEPTION = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerException"));
-                MINDAY_ERROR = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw("MinDayMarkerError"));
+                MINDAY_UPDATED_USER = GetMinDayUser("MINDAY_UPDATED_USER");
+                MINDAY_NO_UPDATE_NEEDED_USER = GetMinDayUser("MINDAY_NO_UPDATE_NEEDED_USER");
+                MINDAY_EXCEPTION_USER = GetMinDayUser("MINDAY_EXCEPTION_USER");
+                MINDAY_ERROR_USER = GetMinDayUser("MINDAY_ERROR_USER");
                 }
             catch (Exception)
                 {
@@ -256,7 +285,7 @@ namespace MinDayProcessNS
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "Single-duty pairing -- min day not applicable");
                 if (ppAction == PairingProcessAction.EvalupateAndUpdate)
-                    MarkPMExaminedSafely(prgID, prgDate, MINDAY_NO_UPDATE_NEEDED);
+                    MarkPMExaminedSafely(prgID, prgDate, MINDAY_NO_UPDATE_NEEDED_USER);
                 return false;
                 }
 
@@ -267,7 +296,7 @@ namespace MinDayProcessNS
                 if (ppAction == PairingProcessAction.EvalupateAndUpdate)
                     {
                     bool pxCreated = CreatePX(prgID, prgDate);
-                    MarkPMExaminedSafely(prgID, prgDate, pxCreated ? MINDAY_EXCEPTION : MINDAY_ERROR);
+                    MarkPMExaminedSafely(prgID, prgDate, pxCreated ? MINDAY_EXCEPTION_USER : MINDAY_ERROR_USER);
                     }
                 return false; // pairing does not need to be evaluated
                 }
@@ -287,7 +316,7 @@ namespace MinDayProcessNS
             if ((AllTrueDuties.Count(z => z.ActCredit < MINDAYCREDIT) == 0 && AllTrueDuties.Count(z => z.ActPay < MINDAYCREDIT) == 0) && iLayoverPay == 0)
                 {
                 Bypassed = true;
-                MinDayMarker = MINDAY_NO_UPDATE_NEEDED;
+                MinDayMarker = MINDAY_NO_UPDATE_NEEDED_USER;
                 }
             else // prg contains a min day condition
                 {
@@ -310,7 +339,7 @@ namespace MinDayProcessNS
                                 short faFlag = (short)(prg.PrgHdr.CrewType == "C" ? 1 : 0);
                                 prg.UpdateDutyCreditsAndPay(AllTrueDuties, ModDutiesList, MINDAYCREDIT, LayoverDutyList, pilotFlag, faFlag);
                                 UpdateStatus(MinDayStatus.DetailedInfo, "Update completed");
-                                MinDayMarker = MINDAY_UPDATED;
+                                MinDayMarker = MINDAY_UPDATED_USER;
                                 }
                             }
                         catch (Exception ee)
@@ -320,14 +349,14 @@ namespace MinDayProcessNS
                                 InnerMess = " / " + ee.InnerException.Message;
                             UpdateStatus(MinDayStatus.Critical, "Update aborted for " + prgID + " " + prgDate + " - " + ee.Message + InnerMess);
                             Bypassed = true;
-                            MinDayMarker = MINDAY_ERROR;
+                            MinDayMarker = MINDAY_ERROR_USER;
                             }
                         }
                     }
                 else
                     {
                     Bypassed = true;
-                    MinDayMarker = MINDAY_NO_UPDATE_NEEDED;
+                    MinDayMarker = MINDAY_NO_UPDATE_NEEDED_USER;
                     }
                 }
 
@@ -449,16 +478,23 @@ namespace MinDayProcessNS
                         }
 
                     UpdateStatus(MinDayStatus.Info, "Evaluation started for crewmember: " + EmpNum + " for " + MMMYYBP + " (" + iEvalCount.ToString() + "/" + EvalSkeds.Queue.Count().ToString() + ")");
-                    bool bEval = EvalMS.EvaluateSked(EmpNum,MMMYYBP);
+                    bool bEval;
+                    if (_useLiveSecurity)
+                        {
+                        CTSecurity.GetAllSecurityInfoV3();
+                        bEval = EvalMS.EvaluateSked(EmpNum, MMMYYBP, CTSecurity.Security);
+                        }
+                    else
+                        bEval = EvalMS.EvaluateSked(EmpNum,MMMYYBP);
                     if (bEval)
                         {
                         UpdateStatus(MinDayStatus.Info, "Evaluated crewmember: " + EmpNum + " for " + MMMYYBP);
-                        MarkMSExaminedSafely(ev, MINDAY_UPDATED);
+                        MarkMSExaminedSafely(ev, MINDAY_UPDATED_USER);
                         }
                     else
                         {
                         UpdateStatus(MinDayStatus.Critical, "Error evaluating crewmember: " + EmpNum + " for " + MMMYYBP + "<" + EvalMS.LastErrorMsg + ">");
-                        MarkMSExaminedSafely(ev, MINDAY_EXCEPTION);
+                        MarkMSExaminedSafely(ev, MINDAY_EXCEPTION_USER);
                         }
                     }
                 catch (Exception ee)
@@ -467,7 +503,7 @@ namespace MinDayProcessNS
                     if (ee.InnerException != null)
                         InnerMess = " / " + ee.InnerException.Message;
                     UpdateStatus(MinDayStatus.Critical, "Exception evaluating crewmember <" + ee.Message + InnerMess + ">");
-                    MarkMSExaminedSafely(ev, MINDAY_EXCEPTION);
+                    MarkMSExaminedSafely(ev, MINDAY_EXCEPTION_USER);
                     }
                 }
 
@@ -526,9 +562,9 @@ namespace MinDayProcessNS
             return false;
             }
 
-        // Returns MINDAY_EXCEPTION (a PX was created, or would be but ppAction is
-        // EvaluateOnly), MINDAY_ERROR (a PX creation was attempted and failed),
-        // MINDAY_NO_UPDATE_NEEDED (all crew already excused, no PX needed), or 0
+        // Returns MINDAY_EXCEPTION_USER (a PX was created, or would be but ppAction is
+        // EvaluateOnly), MINDAY_ERROR_USER (a PX creation was attempted and failed),
+        // MINDAY_NO_UPDATE_NEEDED_USER (all crew already excused, no PX needed), or 0
         // (no bypass condition applies -- caller should proceed to the real update).
         private uint BypassAndCreatePXIfNeeded(string prgID, string prgDate, PairingProcessAction ppAction)
             {
@@ -555,8 +591,8 @@ namespace MinDayProcessNS
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "PX due to mixed ab/RAS/TTA crew");
                 if (ppAction == PairingProcessAction.EvalupateAndUpdate)
-                    return CreatePX(prgID, prgDate) ? MINDAY_EXCEPTION : MINDAY_ERROR;
-                return MINDAY_EXCEPTION;
+                    return CreatePX(prgID, prgDate) ? MINDAY_EXCEPTION_USER : MINDAY_ERROR_USER;
+                return MINDAY_EXCEPTION_USER;
                 }
 
             // if pairing is assigned to one or more crew and has RAS *AND* if pairing is assigned to one or more crew without RAS, make a PX
@@ -569,8 +605,8 @@ namespace MinDayProcessNS
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "PX due to mixed RAS crew");
                 if (ppAction == PairingProcessAction.EvalupateAndUpdate)
-                    return CreatePX(prgID, prgDate) ? MINDAY_EXCEPTION : MINDAY_ERROR;
-                return MINDAY_EXCEPTION;
+                    return CreatePX(prgID, prgDate) ? MINDAY_EXCEPTION_USER : MINDAY_ERROR_USER;
+                return MINDAY_EXCEPTION_USER;
                 }
 
             // if we reach here we don't need a px because there is not a mix of pilots assigned with and without ab/RAS/TTA. Only have assigned pilots + possibly open.
@@ -580,14 +616,14 @@ namespace MinDayProcessNS
                               (w.AbsenceCode != null || w.AssignCode == "RAS" || w.AssignCode == "TTA")))
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "Pairing bypassed due to all crew ab/RAS/TTA");
-                return MINDAY_NO_UPDATE_NEEDED;
+                return MINDAY_NO_UPDATE_NEEDED_USER;
                 }
             if (MINDAYCREDIT == MINDAYCREDIT4HR &&
                 pmtss.List.Any(w => w.EmpNum != 0 && w.PairingID == prgID && w.PairingDate == prgDate &&
                                w.AssignCode == "RAS"))
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "Pairing bypassed due to all crew RAS");
-                return MINDAY_NO_UPDATE_NEEDED;
+                return MINDAY_NO_UPDATE_NEEDED_USER;
                 }
 
             return 0;

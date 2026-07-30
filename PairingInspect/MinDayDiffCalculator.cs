@@ -21,18 +21,18 @@ namespace PairingInspect
     // Even both conditions holding is only circumstantial -- MinDayProcess can still decide not to
     // apply a top-up (e.g. it defers to a PX for crew-assignment reasons; see
     // BypassAndCreatePXIfNeeded in MinDayProcess.cs). The PM.UpdateidUpdempno marker is the only
-    // source of truth for whether a top-up actually happened, so unless the marker says
-    // "MinDay - Updated", min day is zero by definition regardless of the numbers.
+    // source of truth for whether a top-up actually happened, so unless the marker resolves to
+    // MinDayMarkerStatus.Updated, min day is zero by definition regardless of the numbers.
     public static class MinDayDiffCalculator
         {
         // Mirrors MinDayProcess.MINDAYCREDIT35HR / MINDAYCREDIT4HR.
         const int MinDayCredit35Hr = 210;
         const int MinDayCredit4Hr = 240;
 
-        public static MinDayAmount CalculateForDuty(PairingDuty duty, string pairingDate, string crewType, string markerName, int legCreditSum)
+        public static MinDayAmount CalculateForDuty(PairingDuty duty, string pairingDate, string crewType, MinDayMarkerStatus minDayMarkerStatus, int legCreditSum)
             {
             MinDayAmount result = new MinDayAmount();
-            if (markerName != "MinDay - Updated")
+            if (minDayMarkerStatus != MinDayMarkerStatus.Updated)
                 return result;
 
             // Mirrors MinDayProcess.ProcessPairing: pilot-only pairings dated 9/1/2022 or later use

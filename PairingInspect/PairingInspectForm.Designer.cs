@@ -40,14 +40,20 @@ namespace PairingInspect
             this.lblStatusValue = new System.Windows.Forms.Label();
             this.lblCrewTypeTitle = new System.Windows.Forms.Label();
             this.lblCrewTypeValue = new System.Windows.Forms.Label();
-            this.lblCreditStatusTitle = new System.Windows.Forms.Label();
-            this.lblCreditStatusValue = new System.Windows.Forms.Label();
+            this.lblMinDayStatusTitle = new System.Windows.Forms.Label();
+            this.lblMinDayStatusValue = new System.Windows.Forms.Label();
             this.btnQueueToCrewPost = new Telerik.WinControls.UI.RadButton();
             this.btnRecalculateMinDay = new Telerik.WinControls.UI.RadButton();
             this.btnLaunchCTWPM = new Telerik.WinControls.UI.RadDropDownButton();
             this.tabMain = new Telerik.WinControls.UI.RadPageView();
             this.tabPageInspect = new Telerik.WinControls.UI.RadPageViewPage("Inspect");
             this.tabPageMinDayExceptions = new Telerik.WinControls.UI.RadPageViewPage("Min Day Exceptions");
+            this.lblExceptionsFromDate = new System.Windows.Forms.Label();
+            this.lblExceptionsToDate = new System.Windows.Forms.Label();
+            this.txtExceptionsFromDate = new Telerik.WinControls.UI.RadTextBoxControl();
+            this.txtExceptionsToDate = new Telerik.WinControls.UI.RadTextBoxControl();
+            this.btnFindExceptions = new Telerik.WinControls.UI.RadButton();
+            this.pnlExceptionsGrid = new System.Windows.Forms.Panel();
             this.SuspendLayout();
             //
             // lblPairingID
@@ -143,22 +149,22 @@ namespace PairingInspect
             this.lblCrewTypeValue.Name = "lblCrewTypeValue";
             this.lblCrewTypeValue.TabIndex = 12;
             //
-            // lblCreditStatusTitle
+            // lblMinDayStatusTitle
             //
-            this.lblCreditStatusTitle.AutoSize = true;
-            this.lblCreditStatusTitle.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Bold);
-            this.lblCreditStatusTitle.Location = new System.Drawing.Point(400, 86);
-            this.lblCreditStatusTitle.Name = "lblCreditStatusTitle";
-            this.lblCreditStatusTitle.TabIndex = 13;
-            this.lblCreditStatusTitle.Text = "Credit Status:";
+            this.lblMinDayStatusTitle.AutoSize = true;
+            this.lblMinDayStatusTitle.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Bold);
+            this.lblMinDayStatusTitle.Location = new System.Drawing.Point(400, 86);
+            this.lblMinDayStatusTitle.Name = "lblMinDayStatusTitle";
+            this.lblMinDayStatusTitle.TabIndex = 13;
+            this.lblMinDayStatusTitle.Text = "Min Day Status:";
             //
-            // lblCreditStatusValue
+            // lblMinDayStatusValue
             //
-            this.lblCreditStatusValue.AutoSize = true;
-            this.lblCreditStatusValue.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
-            this.lblCreditStatusValue.Location = new System.Drawing.Point(510, 86);
-            this.lblCreditStatusValue.Name = "lblCreditStatusValue";
-            this.lblCreditStatusValue.TabIndex = 14;
+            this.lblMinDayStatusValue.AutoSize = true;
+            this.lblMinDayStatusValue.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
+            this.lblMinDayStatusValue.Location = new System.Drawing.Point(510, 86);
+            this.lblMinDayStatusValue.Name = "lblMinDayStatusValue";
+            this.lblMinDayStatusValue.TabIndex = 14;
             //
             // btnQueueToCrewPost
             //
@@ -204,8 +210,8 @@ namespace PairingInspect
             this.tabPageInspect.Controls.Add(this.lblStatusValue);
             this.tabPageInspect.Controls.Add(this.lblCrewTypeTitle);
             this.tabPageInspect.Controls.Add(this.lblCrewTypeValue);
-            this.tabPageInspect.Controls.Add(this.lblCreditStatusTitle);
-            this.tabPageInspect.Controls.Add(this.lblCreditStatusValue);
+            this.tabPageInspect.Controls.Add(this.lblMinDayStatusTitle);
+            this.tabPageInspect.Controls.Add(this.lblMinDayStatusValue);
             this.tabPageInspect.Controls.Add(this.lblRecentPairings);
             this.tabPageInspect.Controls.Add(this.cboRecentPairings);
             this.tabPageInspect.Controls.Add(this.btnLookUp);
@@ -216,8 +222,62 @@ namespace PairingInspect
             this.tabPageInspect.Name = "tabPageInspect";
             this.tabPageInspect.Text = "Inspect";
             //
+            // lblExceptionsFromDate
+            //
+            this.lblExceptionsFromDate.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
+            this.lblExceptionsFromDate.Location = new System.Drawing.Point(20, 32);
+            this.lblExceptionsFromDate.Name = "lblExceptionsFromDate";
+            this.lblExceptionsFromDate.Size = new System.Drawing.Size(75, 17);
+            this.lblExceptionsFromDate.TabIndex = 23;
+            this.lblExceptionsFromDate.Text = "From Date:";
+            //
+            // lblExceptionsToDate
+            //
+            this.lblExceptionsToDate.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
+            this.lblExceptionsToDate.Location = new System.Drawing.Point(135, 32);
+            this.lblExceptionsToDate.Name = "lblExceptionsToDate";
+            this.lblExceptionsToDate.Size = new System.Drawing.Size(75, 17);
+            this.lblExceptionsToDate.TabIndex = 24;
+            this.lblExceptionsToDate.Text = "To Date:";
+            //
+            // txtExceptionsFromDate
+            //
+            this.txtExceptionsFromDate.Location = new System.Drawing.Point(20, 50);
+            this.txtExceptionsFromDate.Name = "txtExceptionsFromDate";
+            this.txtExceptionsFromDate.Size = new System.Drawing.Size(100, 20);
+            this.txtExceptionsFromDate.TabIndex = 19;
+            //
+            // txtExceptionsToDate
+            //
+            this.txtExceptionsToDate.Location = new System.Drawing.Point(135, 50);
+            this.txtExceptionsToDate.Name = "txtExceptionsToDate";
+            this.txtExceptionsToDate.Size = new System.Drawing.Size(100, 20);
+            this.txtExceptionsToDate.TabIndex = 20;
+            //
+            // btnFindExceptions
+            //
+            this.btnFindExceptions.Location = new System.Drawing.Point(250, 48);
+            this.btnFindExceptions.Name = "btnFindExceptions";
+            this.btnFindExceptions.Size = new System.Drawing.Size(100, 24);
+            this.btnFindExceptions.TabIndex = 21;
+            this.btnFindExceptions.Text = "Find";
+            this.btnFindExceptions.Click += new System.EventHandler(this.btnFindExceptions_Click);
+            //
+            // pnlExceptionsGrid
+            //
+            this.pnlExceptionsGrid.Location = new System.Drawing.Point(20, 90);
+            this.pnlExceptionsGrid.Name = "pnlExceptionsGrid";
+            this.pnlExceptionsGrid.Size = new System.Drawing.Size(1150, 620);
+            this.pnlExceptionsGrid.TabIndex = 22;
+            //
             // tabPageMinDayExceptions
             //
+            this.tabPageMinDayExceptions.Controls.Add(this.pnlExceptionsGrid);
+            this.tabPageMinDayExceptions.Controls.Add(this.btnFindExceptions);
+            this.tabPageMinDayExceptions.Controls.Add(this.txtExceptionsToDate);
+            this.tabPageMinDayExceptions.Controls.Add(this.txtExceptionsFromDate);
+            this.tabPageMinDayExceptions.Controls.Add(this.lblExceptionsToDate);
+            this.tabPageMinDayExceptions.Controls.Add(this.lblExceptionsFromDate);
             this.tabPageMinDayExceptions.Name = "tabPageMinDayExceptions";
             this.tabPageMinDayExceptions.Text = "Min Day Exceptions";
             //
@@ -262,13 +322,19 @@ namespace PairingInspect
         private System.Windows.Forms.Label lblStatusValue;
         private System.Windows.Forms.Label lblCrewTypeTitle;
         private System.Windows.Forms.Label lblCrewTypeValue;
-        private System.Windows.Forms.Label lblCreditStatusTitle;
-        private System.Windows.Forms.Label lblCreditStatusValue;
+        private System.Windows.Forms.Label lblMinDayStatusTitle;
+        private System.Windows.Forms.Label lblMinDayStatusValue;
         private Telerik.WinControls.UI.RadButton btnQueueToCrewPost;
         private Telerik.WinControls.UI.RadButton btnRecalculateMinDay;
         private Telerik.WinControls.UI.RadDropDownButton btnLaunchCTWPM;
         private Telerik.WinControls.UI.RadPageView tabMain;
         private Telerik.WinControls.UI.RadPageViewPage tabPageInspect;
         private Telerik.WinControls.UI.RadPageViewPage tabPageMinDayExceptions;
+        private System.Windows.Forms.Label lblExceptionsFromDate;
+        private System.Windows.Forms.Label lblExceptionsToDate;
+        private Telerik.WinControls.UI.RadTextBoxControl txtExceptionsFromDate;
+        private Telerik.WinControls.UI.RadTextBoxControl txtExceptionsToDate;
+        private Telerik.WinControls.UI.RadButton btnFindExceptions;
+        private System.Windows.Forms.Panel pnlExceptionsGrid;
         }
     }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Data.OleDb;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -21,6 +22,7 @@ namespace PairingInspect
 
         CTPairing prg;
         RadGridView grid;
+        RadGridView exceptionsGrid;
         Timer securitySessionTimer;
         MinDayProcess minDayProcess;
         List<string> minDayCriticalMessages;
@@ -32,12 +34,16 @@ namespace PairingInspect
             if (this.DesignMode)
                 return;
             prg = new CTPairing();
+            MinDayNameResolver.LoadDisplayNames(prg.Connection);
             minDayCriticalMessages = new List<string>();
             SetupGrid();
+            SetupExceptionsGrid();
             SetupLaunchCtwpmButton();
             SetupSecuritySessionTimer();
             txtPairingID.Text = Properties.Settings.Default.LastPairingID;
             txtPairingDate.Text = PairingDateToDisplay(Properties.Settings.Default.LastPairingDate);
+            txtExceptionsFromDate.Text = PairingDateToDisplay(Properties.Settings.Default.LastExceptionsFromDate);
+            txtExceptionsToDate.Text = PairingDateToDisplay(Properties.Settings.Default.LastExceptionsToDate);
             RefreshRecentComboBox();
 
             if (!string.IsNullOrWhiteSpace(txtPairingID.Text) && !string.IsNullOrWhiteSpace(txtPairingDate.Text))
@@ -91,14 +97,15 @@ namespace PairingInspect
             return minDayProcess;
             }
 
-        // MinDayProcess can report multiple Critical-level problems in a single call
-        // (e.g. one per crewmember it fails to evaluate), so collect them here rather
-        // than surfacing only the last one -- the caller (btnRecalculateMinDay_Click)
-        // clears this list before each run and shows whatever accumulated afterward.
+        // Temporarily surfacing every status level (not just Critical) so we can see
+        // the full message trace for a recalc and decide what's worth keeping visible
+        // long-term. MinDayProcess can report multiple messages in a single call (e.g.
+        // one per crewmember it evaluates), so collect them here rather than surfacing
+        // only the last one -- the caller (btnRecalculateMinDay_Click) clears this list
+        // before each run and shows whatever accumulated afterward.
         private void MinDayProcess_StatusUpdate(object sender, MinDayStatusEventArgs args)
             {
-            if (args.Status == MinDayStatus.Critical)
-                minDayCriticalMessages.Add(args.Message);
+            minDayCriticalMessages.Add("[" + args.Status + "] " + args.Message);
             }
 
         private void SetupGrid()
@@ -169,6 +176,133 @@ namespace PairingInspect
                 grid.LoadLayout(GridLayoutPath);
 
             pnlGrid.Controls.Add(grid);
+            }
+
+        private void SetupExceptionsGrid()
+            {
+            exceptionsGrid = new RadGridView();
+            exceptionsGrid.Dock = DockStyle.Fill;
+            exceptionsGrid.ShowGroupPanel = false;
+            exceptionsGrid.MasterTemplate.AutoGenerateColumns = false;
+            exceptionsGrid.MasterTemplate.AllowAddNewRow = false;
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("PairingID", "PairingID") { HeaderText = "Pairing", TextAlignment = ContentAlignment.MiddleCenter });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("PairingDate", "PairingDate") { HeaderText = "Pairing Date", TextAlignment = ContentAlignment.MiddleCenter });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("ReportDate", "ReportDate") { HeaderText = "Report Date", TextAlignment = ContentAlignment.MiddleCenter });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("ReportTime", "ReportTime") { HeaderText = "Report Time", TextAlignment = ContentAlignment.MiddleCenter });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("EndDate", "EndDate") { HeaderText = "End Date", TextAlignment = ContentAlignment.MiddleCenter });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("RaisedDate", "RaisedDate") { HeaderText = "Raised Date", TextAlignment = ContentAlignment.MiddleCenter });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("RaisedTime", "RaisedTime") { HeaderText = "Raised Time", TextAlignment = ContentAlignment.MiddleCenter });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("UpdatedBy", "UpdatedBy") { HeaderText = "Updated By", TextAlignment = ContentAlignment.MiddleCenter });
+
+            GridViewCommandColumn modifyColumn = new GridViewCommandColumn("Modify");
+            modifyColumn.HeaderText = "";
+            modifyColumn.UseDefaultText = true;
+            modifyColumn.DefaultText = "Modify";
+            exceptionsGrid.Columns.Add(modifyColumn);
+            exceptionsGrid.CommandCellClick += ExceptionsGrid_CommandCellClick;
+
+            string currentFingerprint = ExceptionsGridColumnFingerprint();
+            if (File.Exists(ExceptionsGridLayoutPath) && File.Exists(ExceptionsGridFingerprintPath) &&
+                File.ReadAllText(ExceptionsGridFingerprintPath) == currentFingerprint)
+                exceptionsGrid.LoadLayout(ExceptionsGridLayoutPath);
+
+            pnlExceptionsGrid.Controls.Add(exceptionsGrid);
+            }
+
+        private void ExceptionsGrid_CommandCellClick(object sender, GridViewCellEventArgs e)
+            {
+            if (e.Column.Name != "Modify")
+                return;
+            PXExceptionRow row = e.Row.DataBoundItem as PXExceptionRow;
+            if (row == null)
+                return;
+            LaunchCtwpm(CtwpmSelectionAutomator.FunctionModify, row.PairingID, row.PairingDateRaw);
+            }
+
+        private static string ExceptionsGridLayoutPath
+            {
+            get { return Path.Combine(Application.StartupPath, "PairingInspectExceptionsGridLayout.xml"); }
+            }
+
+        private static string ExceptionsGridFingerprintPath
+            {
+            get { return Path.Combine(Application.StartupPath, "PairingInspectExceptionsGridLayout.fingerprint.txt"); }
+            }
+
+        private const string ExceptionsGridSchemaVersion = "v1";
+
+        private string ExceptionsGridColumnFingerprint()
+            {
+            return ExceptionsGridSchemaVersion + "|" +
+                string.Join("|", exceptionsGrid.Columns.Select(c => c.Name + "=" + c.FieldName + "=" + c.HeaderText + "=" + c.TextAlignment));
+            }
+
+        public class PXExceptionRow
+            {
+            public string PairingID { get; set; }
+            public string PairingDate { get; set; }
+            // Internal YYYYMMDD form of PairingDate -- CtwpmSelectionAutomator.Launch needs
+            // this format, not the MM/DD/YY the grid displays.
+            public string PairingDateRaw { get; set; }
+            public string ReportDate { get; set; }
+            public string ReportTime { get; set; }
+            public string EndDate { get; set; }
+            public string RaisedDate { get; set; }
+            public string RaisedTime { get; set; }
+            public uint UpdatedBy { get; set; }
+            }
+
+        // RaisedTime is stored as literal HHMM (e.g. 2214 -> 22:14, via
+        // CTTimeFormat.AsRaisedTime), unlike Report_Time/duty times elsewhere in this
+        // app which are minutes-since-midnight -- needs its own formatter, not FormatHHMM.
+        private static string FormatRaisedTime(int hhmm)
+            {
+            return string.Format("{0:D2}:{1:D2}", hhmm / 100, hhmm % 100);
+            }
+
+        private void btnFindExceptions_Click(object sender, EventArgs e)
+            {
+            try
+                {
+                string fromDate = PairingDateToInternal(txtExceptionsFromDate.Text.Trim());
+                string toDate = PairingDateToInternal(txtExceptionsToDate.Text.Trim());
+
+                List<PXExceptionRow> rows = new List<PXExceptionRow>();
+                using (OleDbCommand cmd = prg.Connection.CreateCommand())
+                    {
+                    cmd.CommandText = "SELECT Prgid_Prgno_Base+Prgid_Prgno_Eqpt+Prgid_Prgno_3+Prgid_Prgno_4_6 as PrgNo, " +
+                        "Prgid_Prgdate, Report_Date, Report_Time, Enddate, RaisedDate, RaisedTime, Updateid_Updempno " +
+                        "FROM PX WHERE ErrorNo_0 = ? AND Prgid_Prgdate >= ? AND Prgid_Prgdate <= ?";
+                    cmd.Parameters.AddWithValue("errorNo", 6500);
+                    cmd.Parameters.AddWithValue("fromDate", fromDate);
+                    cmd.Parameters.AddWithValue("toDate", toDate);
+                    using (OleDbDataReader reader = cmd.ExecuteReader())
+                        {
+                        while (reader.Read())
+                            {
+                            string rawPairingDate = reader["Prgid_Prgdate"].ToString();
+                            rows.Add(new PXExceptionRow
+                                {
+                                PairingID = reader["PrgNo"].ToString().Trim(),
+                                PairingDate = PairingDateToDisplay(rawPairingDate),
+                                PairingDateRaw = rawPairingDate,
+                                ReportDate = PairingDateToDisplay(reader["Report_Date"].ToString()),
+                                ReportTime = FormatHHMM(Convert.ToInt32(reader["Report_Time"])),
+                                EndDate = PairingDateToDisplay(reader["Enddate"].ToString()),
+                                RaisedDate = PairingDateToDisplay(reader["RaisedDate"].ToString()),
+                                RaisedTime = FormatRaisedTime(Convert.ToInt32(reader["RaisedTime"])),
+                                UpdatedBy = Convert.ToUInt32(reader["Updateid_Updempno"])
+                                });
+                            }
+                        }
+                    }
+
+                exceptionsGrid.DataSource = rows;
+                }
+            catch (Exception ex)
+                {
+                RadMessageBox.Show("Error finding exceptions: " + ex.Message);
+                }
             }
 
         private void grid_ViewCellFormatting(object sender, CellFormattingEventArgs e)
@@ -268,8 +402,12 @@ namespace PairingInspect
             securitySessionTimer.Stop();
             grid.SaveLayout(GridLayoutPath);
             File.WriteAllText(GridFingerprintPath, GridColumnFingerprint());
+            exceptionsGrid.SaveLayout(ExceptionsGridLayoutPath);
+            File.WriteAllText(ExceptionsGridFingerprintPath, ExceptionsGridColumnFingerprint());
             Properties.Settings.Default.LastPairingID = txtPairingID.Text;
             Properties.Settings.Default.LastPairingDate = PairingDateToInternal(txtPairingDate.Text);
+            Properties.Settings.Default.LastExceptionsFromDate = PairingDateToInternal(txtExceptionsFromDate.Text);
+            Properties.Settings.Default.LastExceptionsToDate = PairingDateToInternal(txtExceptionsToDate.Text);
             Properties.Settings.Default.Save();
             }
 
@@ -285,9 +423,9 @@ namespace PairingInspect
                     return;
                     }
                 txtPairingDate.Text = PairingDateToDisplay(internalDate);
-                string markerName = MarkerNameResolver.Resolve(prg, prg.PrgHdr.UpdateidUpdempno);
-                DisplayHeader(markerName);
-                PopulateGrid(markerName);
+                MinDayMarkerStatus minDayMarkerStatus = MinDayNameResolver.Resolve(prg.PrgHdr.UpdateidUpdempno);
+                DisplayHeader(minDayMarkerStatus);
+                PopulateGrid(minDayMarkerStatus);
                 AddToRecentList(txtPairingID.Text.Trim(), internalDate);
                 }
             catch (Exception ex)
@@ -314,16 +452,73 @@ namespace PairingInspect
                 // re-run the lookup so the marker/credit values just written reflect
                 // immediately, without the user re-typing the pairing.
                 prg.Assemble(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
-                string markerName = MarkerNameResolver.Resolve(prg, prg.PrgHdr.UpdateidUpdempno);
-                DisplayHeader(markerName);
-                PopulateGrid(markerName);
+                MinDayMarkerStatus minDayMarkerStatus = MinDayNameResolver.Resolve(prg.PrgHdr.UpdateidUpdempno);
+                DisplayHeader(minDayMarkerStatus);
+                PopulateGrid(minDayMarkerStatus);
 
                 if (minDayCriticalMessages.Count > 0)
-                    RadMessageBox.Show(string.Join(Environment.NewLine, minDayCriticalMessages), "Min Day Recalculation Problem");
+                    ShowMinDayTrace(string.Join(Environment.NewLine, minDayCriticalMessages));
                 }
             catch (Exception ex)
                 {
                 RadMessageBox.Show("Error recalculating min day: " + ex.Message);
+                }
+            }
+
+        // RadTextBox/RadForm rather than RadMessageBox -- the trace can run to many lines
+        // and the user needs to select/copy it, which RadMessageBox doesn't support well.
+        private void ShowMinDayTrace(string trace)
+            {
+            using (RadForm dlg = new RadForm())
+                {
+                dlg.ThemeName = RadMessageBox.ThemeName;
+                dlg.Text = "Min Day Recalculation Trace";
+                dlg.Width = 700;
+                dlg.Height = 500;
+                dlg.StartPosition = FormStartPosition.CenterParent;
+
+                RadTextBox txt = new RadTextBox();
+                txt.ThemeName = RadMessageBox.ThemeName;
+                txt.Multiline = true;
+                txt.ReadOnly = true;
+                txt.Dock = DockStyle.Fill;
+                txt.Font = new Font(FontFamily.GenericMonospace, 9);
+                txt.Text = trace;
+
+                RadPanel textPanel = new RadPanel();
+                textPanel.ThemeName = RadMessageBox.ThemeName;
+                textPanel.Dock = DockStyle.Fill;
+                textPanel.Controls.Add(txt);
+
+                RadButton btnOk = new RadButton();
+                btnOk.ThemeName = RadMessageBox.ThemeName;
+                btnOk.Text = "OK";
+                btnOk.Size = new Size(80, 28);
+                btnOk.Click += (s, e) => dlg.Close();
+
+                RadPanel buttonPanel = new RadPanel();
+                buttonPanel.ThemeName = RadMessageBox.ThemeName;
+                buttonPanel.Dock = DockStyle.Bottom;
+                buttonPanel.Height = 45;
+                buttonPanel.Controls.Add(btnOk);
+
+                // Centering by fixed math (e.g. off dlg.Width) is unreliable here --
+                // dlg.Width includes window chrome, not buttonPanel's actual client
+                // area, and that area isn't resolved until the dock layout runs. Doing
+                // it on Shown (after layout, right before ShowDialog blocks) uses the
+                // real, final size instead.
+                dlg.Shown += (s, e) =>
+                    {
+                    btnOk.Left = (buttonPanel.ClientSize.Width - btnOk.Width) / 2;
+                    btnOk.Top = (buttonPanel.ClientSize.Height - btnOk.Height) / 2;
+                    };
+
+                // Dock=Bottom control must be added before the Dock=Fill one, or the
+                // fill control claims the whole client area before the bottom strip
+                // gets a chance to reserve its space.
+                dlg.Controls.Add(buttonPanel);
+                dlg.Controls.Add(textPanel);
+                dlg.ShowDialog(this);
                 }
             }
 
@@ -371,11 +566,21 @@ namespace PairingInspect
 
         private void LaunchCtwpm(string function)
             {
+            if (prg.PrgHdr != null)
+                LaunchCtwpm(function, prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+            else
+                LaunchCtwpm(function, null, null);
+            }
+
+        // Used directly by the Min Day Exceptions grid's Modify button, which acts on
+        // whichever pairing is in that row -- not necessarily the one loaded in prg.
+        private void LaunchCtwpm(string function, string prgID, string prgDate)
+            {
             try
                 {
                 string ctExeDir = SFIConfig.AppSetting("CTEXEDIR");
-                if (prg.PrgHdr != null)
-                    CtwpmSelectionAutomator.Launch(ctExeDir, function, prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+                if (prgID != null)
+                    CtwpmSelectionAutomator.Launch(ctExeDir, function, prgID, prgDate);
                 else
                     CtwpmSelectionAutomator.Launch(ctExeDir);
                 }
@@ -432,27 +637,16 @@ namespace PairingInspect
             cboRecentPairings.SelectedIndexChanged += cboRecentPairings_SelectedIndexChanged;
             }
 
-        private void DisplayHeader(string markerName)
+        private void DisplayHeader(MinDayMarkerStatus minDayMarkerStatus)
             {
             PairingHeader hdr = prg.PrgHdr;
 
             lblStatusValue.Text = hdr.Canceled ? "Canceled" : "Active";
             lblCrewTypeValue.Text = CrewTypeDisplay(hdr.CrewType);
-            lblCreditStatusValue.Text = CreditStatusDisplay(markerName) + " (empno=" + hdr.UpdateidUpdempno + ")";
-            btnRecalculateMinDay.Text = MarkerNameResolver.IsKnownMarker(hdr.UpdateidUpdempno)
+            lblMinDayStatusValue.Text = MinDayNameResolver.DisplayName(minDayMarkerStatus) + " (empno=" + hdr.UpdateidUpdempno + ")";
+            btnRecalculateMinDay.Text = MinDayNameResolver.IsKnownMinDayMarker(hdr.UpdateidUpdempno)
                 ? "Recalculate Min Day" : "Calculate Min Day";
             LayoutHeaderLabels();
-            }
-
-        private static string CreditStatusDisplay(string markerName)
-            {
-            if (markerName == "MinDay - Updated")
-                return "Min Day applied";
-            if (markerName == "MinDay - No Update Needed")
-                return "Min Day not applicable";
-            if (markerName == "MinDay - Exception")
-                return markerName;
-            return "Pending Min Day processing";
             }
 
         private void LayoutHeaderLabels()
@@ -462,7 +656,7 @@ namespace PairingInspect
             int y = lblStatusTitle.Top;
             int x = lblStatusTitle.Left;
 
-            Label[] labels = { lblStatusTitle, lblStatusValue, lblCrewTypeTitle, lblCrewTypeValue, lblCreditStatusTitle, lblCreditStatusValue };
+            Label[] labels = { lblStatusTitle, lblStatusValue, lblCrewTypeTitle, lblCrewTypeValue, lblMinDayStatusTitle, lblMinDayStatusValue };
             for (int i = 0; i < labels.Length; i++)
                 {
                 labels[i].Location = new Point(x, y);
@@ -600,7 +794,7 @@ namespace PairingInspect
             return sked;
             }
 
-        private void PopulateGrid(string markerName)
+        private void PopulateGrid(MinDayMarkerStatus minDayMarkerStatus)
             {
             List<InspectRow> rows = new List<InspectRow>();
             int totalCredit = 0;
@@ -675,7 +869,7 @@ namespace PairingInspect
 
                 rows.Add(new InspectRow { RowKind = "DividerBeforeDuty" });
 
-                MinDayAmount minDay = MinDayDiffCalculator.CalculateForDuty(duty, prg.PrgHdr.PrgDate, prg.PrgHdr.CrewType, markerName, legCreditSum);
+                MinDayAmount minDay = MinDayDiffCalculator.CalculateForDuty(duty, prg.PrgHdr.PrgDate, prg.PrgHdr.CrewType, minDayMarkerStatus, legCreditSum);
                 rows.Add(new InspectRow
                     {
                     DutyPeriod = duty.DutyPeriod.ToString(),

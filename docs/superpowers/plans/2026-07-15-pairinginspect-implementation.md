@@ -332,7 +332,7 @@ git commit -m "Expose Updateid_Updempno on PM and PairingHeader"
 ## Task 3: Marker-decode and min-day-diff helpers
 
 **Files:**
-- Create: `PairingInspect/MarkerNameResolver.cs`
+- Create: `PairingInspect/MinDayNameResolver.cs`
 - Create: `PairingInspect/MinDayDiffCalculator.cs`
 
 **Interfaces:**
@@ -341,12 +341,12 @@ git commit -m "Expose Updateid_Updempno on PM and PairingHeader"
   `PairingDuty` for real duties), `CTPairing.PairingLegs`
   (`List<PairingLegItem>`, each item's `DutyPeriod` from the base
   `PairingItem` class).
-- Produces: `MarkerNameResolver.Resolve(uint empno)` → `string` (Task 4's
+- Produces: `MinDayNameResolver.Resolve(uint empno)` → `string` (Task 4's
   header panel); `MinDayDiffCalculator.CalculateForDuty(PairingDuty duty,
   IEnumerable<PairingLegItem> dutyLegs)` → `MinDayAmount { int Credit; int
   Pay; }` (Task 4/5's grid rendering).
 
-- [ ] **Step 1: Write `MarkerNameResolver`**
+- [ ] **Step 1: Write `MinDayNameResolver`**
 
 ```csharp
 using System;
@@ -355,7 +355,7 @@ using SFICTDataAccess;
 
 namespace PairingInspect
     {
-    public static class MarkerNameResolver
+    public static class MinDayNameResolver
         {
         public const uint MINDAY_UPDATED = 99901;
         public const uint MINDAY_NO_UPDATE_NEEDED = 99902;
@@ -428,7 +428,7 @@ namespace PairingInspect
 Run: `MSBuild.exe "PairingInspect\PairingInspect.csproj" -p:Configuration=Debug -nologo -v:minimal`
 Expected: zero `error CS` lines.
 
-- [ ] **Step 4: Manual verification of `MarkerNameResolver`**
+- [ ] **Step 4: Manual verification of `MinDayNameResolver`**
 
 Using the established ODBC pattern, confirm `Resolve` returns
 `"MinDay - Updated"`/`"MinDay - No Update Needed"`/`"MinDay - Exception"` for
@@ -450,7 +450,7 @@ against a pairing marked 99902 (no update) and confirm all its duties report
 
 ```bash
 cd "D:/data/vs/psamindaycalc"
-git add PairingInspect/MarkerNameResolver.cs PairingInspect/MinDayDiffCalculator.cs
+git add PairingInspect/MinDayNameResolver.cs PairingInspect/MinDayDiffCalculator.cs
 git commit -m "Add marker-decode and min-day-diff helpers to PairingInspect"
 ```
 
@@ -463,7 +463,7 @@ git commit -m "Add marker-decode and min-day-diff helpers to PairingInspect"
 
 **Interfaces:**
 - Consumes: `CTPairing.Assemble(string, string)`, `CTPairing.PrgHdr`
-  (`PairingHeader`), `MarkerNameResolver.Resolve` (Task 3).
+  (`PairingHeader`), `MinDayNameResolver.Resolve` (Task 3).
 - Produces: a working "Look Up" flow that loads a pairing and displays its
   header — Task 5 adds the grid content on top of this.
 
@@ -529,7 +529,7 @@ namespace PairingInspect
         private void DisplayHeader()
             {
             PairingHeader hdr = prg.PrgHdr;
-            string markerName = MarkerNameResolver.Resolve(prg, hdr.UpdateidUpdempno);
+            string markerName = MinDayNameResolver.Resolve(prg, hdr.UpdateidUpdempno);
             lblHeader.Text = string.Format(
                 "Pairing: {0}   From: {1}   Thru: {2}   Duty Periods: {3}   Canceled: {4}   Crew Type: {5}   Last touched by: {6}",
                 hdr.PrgID, hdr.PrgDate, hdr.ActEnd.AsDisplayDate, hdr.NumDP, hdr.Canceled, hdr.CrewType, markerName);
@@ -750,6 +750,6 @@ git commit -m "Add duty/leg grid with min-day flagging and totals to PairingInsp
   `PairingHeader`/`PairingItem` was individually confirmed) — these are
   legitimate implementation-time verification points, not vague hand-waving,
   and the step tells the implementer exactly what to check and where.
-- **Type consistency:** `MinDayAmount`, `MarkerNameResolver.Resolve`, and
+- **Type consistency:** `MinDayAmount`, `MinDayNameResolver.Resolve`, and
   `InspectRow` are each defined once (Task 3, Task 5) and used identically
   wherever referenced afterward.

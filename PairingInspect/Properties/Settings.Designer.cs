@@ -57,5 +57,29 @@ namespace PairingInspect.Properties {
                 this["RecentPairings"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string LastExceptionsFromDate {
+            get {
+                return ((string)(this["LastExceptionsFromDate"]));
+            }
+            set {
+                this["LastExceptionsFromDate"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string LastExceptionsToDate {
+            get {
+                return ((string)(this["LastExceptionsToDate"]));
+            }
+            set {
+                this["LastExceptionsToDate"] = value;
+            }
+        }
     }
 }
