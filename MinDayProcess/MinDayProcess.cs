@@ -56,7 +56,7 @@ namespace MinDayProcessNS
         public Int16 MINDAYCREDIT;
         public const Int16 MINDAYCREDIT35HR = 210;
         public const Int16 MINDAYCREDIT4HR = 240;
-        public uint MINDAY_UPDATED_USER;
+        public uint MINDAY_APPLIED_USER;
         public uint MINDAY_NO_UPDATE_NEEDED_USER;
         public uint MINDAY_EXCEPTION_USER;
         public uint MINDAY_ERROR_USER;
@@ -94,7 +94,7 @@ namespace MinDayProcessNS
             {
             }
 
-        // Config key is the field's own name (e.g. "MINDAY_UPDATED_USER") -- these
+        // Config key is the field's own name (e.g. "MINDAY_APPLIED_USER") -- these
         // are literally TR09 marker user IDs, so the config key and the field it
         // fills need no separate mapping name. Cached since SFIConfig.AppSettingRaw
         // re-walks the config section on every call and these values never change
@@ -135,7 +135,7 @@ namespace MinDayProcessNS
                     throw new Exception("ExcludeableCodes not set");
                 _ExcludeableCodes = ExcludeableCodesToLoadProp.Split(';');
 
-                MINDAY_UPDATED_USER = GetMinDayUser("MINDAY_UPDATED_USER");
+                MINDAY_APPLIED_USER = GetMinDayUser("MINDAY_APPLIED_USER");
                 MINDAY_NO_UPDATE_NEEDED_USER = GetMinDayUser("MINDAY_NO_UPDATE_NEEDED_USER");
                 MINDAY_EXCEPTION_USER = GetMinDayUser("MINDAY_EXCEPTION_USER");
                 MINDAY_ERROR_USER = GetMinDayUser("MINDAY_ERROR_USER");
@@ -275,6 +275,27 @@ namespace MinDayProcessNS
             UpdateStatus(MinDayStatus.DetailedInfo, "Assembling pairing: " + prgID + " " + prgDate);
             prg.Assemble(prgID, prgDate);
 
+            // Once min day has been applied, never re-derive the marker from current
+            // duty credit values -- a topped-up duty now sits exactly at the floor, so
+            // re-running the "no condition found" check below can't tell that apart
+            // from a duty that's naturally at the floor, and would silently downgrade
+            // the marker back to MINDAY_NO_UPDATE_NEEDED_USER (erasing PairingInspect's
+            // only record that a top-up happened -- see MinDayDiffCalculator). This is
+            // safe to rely on indefinitely: MarkPMExamined only ever writes
+            // Updateid_Updempno, never the row's timestamp, so nothing here can make
+            // this marker go stale on its own -- any real subsequent change to the
+            // pairing (a dispatcher's edit, CrewPost syncing actual flight data) writes
+            // its own empno to this same column as a side effect, which naturally
+            // clears the marker and lets normal evaluation resume. If a pairing
+            // genuinely needs reconsideration despite nothing else having touched it,
+            // that's a scheduler's job (modify or manually re-evaluate), not something
+            // MinDayProcess should do automatically.
+            if (prg.PrgHdr.UpdateidUpdempno == MINDAY_APPLIED_USER)
+                {
+                UpdateStatus(MinDayStatus.DetailedInfo, "Min day already applied -- skipping");
+                return false;
+                }
+
             // Interim rule pending confirmation with the customer: single-duty pairings are
             // excluded from min day entirely (not just "no condition found"). FillByPSAMinCredit's
             // batch pre-filter already excludes most of these (its hardcoded actcdt<210 check
@@ -339,7 +360,7 @@ namespace MinDayProcessNS
                                 short faFlag = (short)(prg.PrgHdr.CrewType == "C" ? 1 : 0);
                                 prg.UpdateDutyCreditsAndPay(AllTrueDuties, ModDutiesList, MINDAYCREDIT, LayoverDutyList, pilotFlag, faFlag);
                                 UpdateStatus(MinDayStatus.DetailedInfo, "Update completed");
-                                MinDayMarker = MINDAY_UPDATED_USER;
+                                MinDayMarker = MINDAY_APPLIED_USER;
                                 }
                             }
                         catch (Exception ee)
@@ -489,7 +510,7 @@ namespace MinDayProcessNS
                     if (bEval)
                         {
                         UpdateStatus(MinDayStatus.Info, "Evaluated crewmember: " + EmpNum + " for " + MMMYYBP);
-                        MarkMSExaminedSafely(ev, MINDAY_UPDATED_USER);
+                        MarkMSExaminedSafely(ev, MINDAY_APPLIED_USER);
                         }
                     else
                         {

@@ -7,7 +7,7 @@ namespace PairingInspect
     {
     public enum MinDayMarkerStatus
         {
-        Updated,
+        Applied,
         NoUpdateNeeded,
         Exception,
         Error,
@@ -16,7 +16,7 @@ namespace PairingInspect
 
     public static class MinDayNameResolver
         {
-        // Config key is the field's own name (e.g. "MINDAY_UPDATED_USER") -- these
+        // Config key is the field's own name (e.g. "MINDAY_APPLIED_USER") -- these
         // are literally TR09 marker user IDs, so the config key and the value it
         // fills need no separate mapping name. Cached since SFIConfig.AppSettingRaw
         // re-walks the config section on every call and these values never change
@@ -38,7 +38,7 @@ namespace PairingInspect
 
         public static bool IsKnownMinDayMarker(uint empno)
             {
-            uint markerUpdated = GetMinDayUser("MINDAY_UPDATED_USER");
+            uint markerUpdated = GetMinDayUser("MINDAY_APPLIED_USER");
             uint markerNoUpdateNeeded = GetMinDayUser("MINDAY_NO_UPDATE_NEEDED_USER");
             uint markerException = GetMinDayUser("MINDAY_EXCEPTION_USER");
             uint markerError = GetMinDayUser("MINDAY_ERROR_USER");
@@ -47,12 +47,12 @@ namespace PairingInspect
 
         public static MinDayMarkerStatus Resolve(uint empno)
             {
-            uint MINDAY_UPDATED_USER = GetMinDayUser("MINDAY_UPDATED_USER");
+            uint MINDAY_APPLIED_USER = GetMinDayUser("MINDAY_APPLIED_USER");
             uint MINDAY_NO_UPDATE_NEEDED_USER = GetMinDayUser("MINDAY_NO_UPDATE_NEEDED_USER");
             uint MINDAY_EXCEPTION_USER = GetMinDayUser("MINDAY_EXCEPTION_USER");
             uint MINDAY_ERROR_USER = GetMinDayUser("MINDAY_ERROR_USER");
 
-            if (empno == MINDAY_UPDATED_USER) return MinDayMarkerStatus.Updated;
+            if (empno == MINDAY_APPLIED_USER) return MinDayMarkerStatus.Applied;
             if (empno == MINDAY_NO_UPDATE_NEEDED_USER) return MinDayMarkerStatus.NoUpdateNeeded;
             if (empno == MINDAY_EXCEPTION_USER) return MinDayMarkerStatus.Exception;
             if (empno == MINDAY_ERROR_USER) return MinDayMarkerStatus.Error;
@@ -71,7 +71,7 @@ namespace PairingInspect
 
         public static void LoadDisplayNames(OleDbConnection connection)
             {
-            _displayNames[MinDayMarkerStatus.Updated] = ReadTR09Username(connection, GetMinDayUser("MINDAY_UPDATED_USER"));
+            _displayNames[MinDayMarkerStatus.Applied] = ReadTR09Username(connection, GetMinDayUser("MINDAY_APPLIED_USER"));
             _displayNames[MinDayMarkerStatus.NoUpdateNeeded] = ReadTR09Username(connection, GetMinDayUser("MINDAY_NO_UPDATE_NEEDED_USER"));
             _displayNames[MinDayMarkerStatus.Exception] = ReadTR09Username(connection, GetMinDayUser("MINDAY_EXCEPTION_USER"));
             _displayNames[MinDayMarkerStatus.Error] = ReadTR09Username(connection, GetMinDayUser("MINDAY_ERROR_USER"));
