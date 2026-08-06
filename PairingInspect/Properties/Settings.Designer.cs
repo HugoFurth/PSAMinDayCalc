@@ -81,5 +81,53 @@ namespace PairingInspect.Properties {
                 this["LastExceptionsToDate"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string PairingGridLayout {
+            get {
+                return ((string)(this["PairingGridLayout"]));
+            }
+            set {
+                this["PairingGridLayout"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string PairingGridLayoutFingerprint {
+            get {
+                return ((string)(this["PairingGridLayoutFingerprint"]));
+            }
+            set {
+                this["PairingGridLayoutFingerprint"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string ExceptionsGridLayout {
+            get {
+                return ((string)(this["ExceptionsGridLayout"]));
+            }
+            set {
+                this["ExceptionsGridLayout"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string ExceptionsGridLayoutFingerprint {
+            get {
+                return ((string)(this["ExceptionsGridLayoutFingerprint"]));
+            }
+            set {
+                this["ExceptionsGridLayoutFingerprint"] = value;
+            }
+        }
     }
 }

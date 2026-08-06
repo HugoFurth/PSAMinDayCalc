@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data.OleDb;
+using System.Text;
 using SFIConfigUtils;
 
 namespace PairingInspect
@@ -89,7 +90,14 @@ namespace PairingInspect
                 byte[] keyBytes = new byte[10];
                 BitConverter.GetBytes(empno).CopyTo(keyBytes, 0);
                 for (int i = 4; i < 10; i++) keyBytes[i] = 0x20;
-                cmd.Parameters.AddWithValue("key", keyBytes);
+                // PervasiveOLEDB silently matches zero rows when this parameter is bound as a
+                // raw byte[] (infers OleDbType.Binary/VarBinary) -- it needs to see a CHAR-typed
+                // value to compare correctly against T09Key_Key. Encoding the same bytes as an
+                // ANSI (codepage 1252) string round-trips them byte-for-byte and the driver
+                // then matches correctly. Confirmed live: byte[] returns null for every known
+                // marker row; this string form finds all four.
+                string key = Encoding.GetEncoding(1252).GetString(keyBytes);
+                cmd.Parameters.AddWithValue("key", key);
                 object result = cmd.ExecuteScalar();
                 return result == null ? ("Employee " + empno) : result.ToString().Trim();
                 }

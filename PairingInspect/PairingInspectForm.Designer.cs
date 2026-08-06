@@ -29,9 +29,10 @@ namespace PairingInspect
         private void InitializeComponent()
             {
             this.txtPairingID = new Telerik.WinControls.UI.RadTextBoxControl();
-            this.txtPairingDate = new Telerik.WinControls.UI.RadTextBoxControl();
+            this.txtPairingDate = new Telerik.WinControls.UI.RadDateTimePicker();
             this.btnLookUp = new Telerik.WinControls.UI.RadButton();
             this.pnlGrid = new System.Windows.Forms.Panel();
+            this.pnlCrewGrid = new System.Windows.Forms.Panel();
             this.cboRecentPairings = new Telerik.WinControls.UI.RadDropDownList();
             this.lblPairingID = new System.Windows.Forms.Label();
             this.lblPairingDate = new System.Windows.Forms.Label();
@@ -50,8 +51,8 @@ namespace PairingInspect
             this.tabPageMinDayExceptions = new Telerik.WinControls.UI.RadPageViewPage("Min Day Exceptions");
             this.lblExceptionsFromDate = new System.Windows.Forms.Label();
             this.lblExceptionsToDate = new System.Windows.Forms.Label();
-            this.txtExceptionsFromDate = new Telerik.WinControls.UI.RadTextBoxControl();
-            this.txtExceptionsToDate = new Telerik.WinControls.UI.RadTextBoxControl();
+            this.txtExceptionsFromDate = new Telerik.WinControls.UI.RadDateTimePicker();
+            this.txtExceptionsToDate = new Telerik.WinControls.UI.RadDateTimePicker();
             this.btnFindExceptions = new Telerik.WinControls.UI.RadButton();
             this.pnlExceptionsGrid = new System.Windows.Forms.Panel();
             this.SuspendLayout();
@@ -84,6 +85,9 @@ namespace PairingInspect
             //
             // txtPairingDate
             //
+            this.txtPairingDate.Format = System.Windows.Forms.DateTimePickerFormat.Custom;
+            this.txtPairingDate.CustomFormat = "MM/dd/yy";
+            this.txtPairingDate.NullText = "";
             this.txtPairingDate.Location = new System.Drawing.Point(115, 50);
             this.txtPairingDate.Name = "txtPairingDate";
             this.txtPairingDate.Size = new System.Drawing.Size(75, 20);
@@ -193,15 +197,23 @@ namespace PairingInspect
             this.btnLaunchCTWPM.Text = "CT Prg Function";
             this.btnLaunchCTWPM.Click += new System.EventHandler(this.btnLaunchCTWPM_Click);
             //
+            // pnlCrewGrid
+            //
+            this.pnlCrewGrid.Location = new System.Drawing.Point(20, 151);
+            this.pnlCrewGrid.Name = "pnlCrewGrid";
+            this.pnlCrewGrid.Size = new System.Drawing.Size(450, 100);
+            this.pnlCrewGrid.TabIndex = 25;
+            //
             // pnlGrid
             //
-            this.pnlGrid.Location = new System.Drawing.Point(20, 151);
+            this.pnlGrid.Location = new System.Drawing.Point(20, 261);
             this.pnlGrid.Name = "pnlGrid";
-            this.pnlGrid.Size = new System.Drawing.Size(1150, 560);
+            this.pnlGrid.Size = new System.Drawing.Size(1150, 450);
             this.pnlGrid.TabIndex = 4;
             //
             // tabPageInspect
             //
+            this.tabPageInspect.Controls.Add(this.pnlCrewGrid);
             this.tabPageInspect.Controls.Add(this.pnlGrid);
             this.tabPageInspect.Controls.Add(this.btnQueueToCrewPost);
             this.tabPageInspect.Controls.Add(this.btnRecalculateMinDay);
@@ -234,7 +246,7 @@ namespace PairingInspect
             // lblExceptionsToDate
             //
             this.lblExceptionsToDate.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
-            this.lblExceptionsToDate.Location = new System.Drawing.Point(135, 32);
+            this.lblExceptionsToDate.Location = new System.Drawing.Point(115, 32);
             this.lblExceptionsToDate.Name = "lblExceptionsToDate";
             this.lblExceptionsToDate.Size = new System.Drawing.Size(75, 17);
             this.lblExceptionsToDate.TabIndex = 24;
@@ -242,21 +254,27 @@ namespace PairingInspect
             //
             // txtExceptionsFromDate
             //
+            this.txtExceptionsFromDate.Format = System.Windows.Forms.DateTimePickerFormat.Custom;
+            this.txtExceptionsFromDate.CustomFormat = "MM/dd/yy";
+            this.txtExceptionsFromDate.NullText = "";
             this.txtExceptionsFromDate.Location = new System.Drawing.Point(20, 50);
             this.txtExceptionsFromDate.Name = "txtExceptionsFromDate";
-            this.txtExceptionsFromDate.Size = new System.Drawing.Size(100, 20);
+            this.txtExceptionsFromDate.Size = new System.Drawing.Size(75, 20);
             this.txtExceptionsFromDate.TabIndex = 19;
             //
             // txtExceptionsToDate
             //
-            this.txtExceptionsToDate.Location = new System.Drawing.Point(135, 50);
+            this.txtExceptionsToDate.Format = System.Windows.Forms.DateTimePickerFormat.Custom;
+            this.txtExceptionsToDate.CustomFormat = "MM/dd/yy";
+            this.txtExceptionsToDate.NullText = "";
+            this.txtExceptionsToDate.Location = new System.Drawing.Point(115, 50);
             this.txtExceptionsToDate.Name = "txtExceptionsToDate";
-            this.txtExceptionsToDate.Size = new System.Drawing.Size(100, 20);
+            this.txtExceptionsToDate.Size = new System.Drawing.Size(75, 20);
             this.txtExceptionsToDate.TabIndex = 20;
             //
             // btnFindExceptions
             //
-            this.btnFindExceptions.Location = new System.Drawing.Point(250, 48);
+            this.btnFindExceptions.Location = new System.Drawing.Point(210, 48);
             this.btnFindExceptions.Name = "btnFindExceptions";
             this.btnFindExceptions.Size = new System.Drawing.Size(100, 24);
             this.btnFindExceptions.TabIndex = 21;
@@ -311,9 +329,10 @@ namespace PairingInspect
         #endregion
 
         private Telerik.WinControls.UI.RadTextBoxControl txtPairingID;
-        private Telerik.WinControls.UI.RadTextBoxControl txtPairingDate;
+        private Telerik.WinControls.UI.RadDateTimePicker txtPairingDate;
         private Telerik.WinControls.UI.RadButton btnLookUp;
         private System.Windows.Forms.Panel pnlGrid;
+        private System.Windows.Forms.Panel pnlCrewGrid;
         private Telerik.WinControls.UI.RadDropDownList cboRecentPairings;
         private System.Windows.Forms.Label lblPairingID;
         private System.Windows.Forms.Label lblPairingDate;
@@ -332,8 +351,8 @@ namespace PairingInspect
         private Telerik.WinControls.UI.RadPageViewPage tabPageMinDayExceptions;
         private System.Windows.Forms.Label lblExceptionsFromDate;
         private System.Windows.Forms.Label lblExceptionsToDate;
-        private Telerik.WinControls.UI.RadTextBoxControl txtExceptionsFromDate;
-        private Telerik.WinControls.UI.RadTextBoxControl txtExceptionsToDate;
+        private Telerik.WinControls.UI.RadDateTimePicker txtExceptionsFromDate;
+        private Telerik.WinControls.UI.RadDateTimePicker txtExceptionsToDate;
         private Telerik.WinControls.UI.RadButton btnFindExceptions;
         private System.Windows.Forms.Panel pnlExceptionsGrid;
         }

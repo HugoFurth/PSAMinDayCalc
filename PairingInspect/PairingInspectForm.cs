@@ -21,11 +21,16 @@ namespace PairingInspect
         const int MaxRecentPairings = 20;
 
         CTPairing prg;
+        CTCrewOnPairing crewOnPairingLookup;
+        List<CrewMemOnPairing> crewOnPairing;
+        CTOTs openPositionsLookup;
         RadGridView grid;
+        RadGridView crewGrid;
         RadGridView exceptionsGrid;
         Timer securitySessionTimer;
         MinDayProcess minDayProcess;
         List<string> minDayCriticalMessages;
+        Dictionary<string, string> recentPairingLookup; // displayed "PairingID MM/DD" -> full stored "PairingID InternalDate" entry
 
         public PairingInspectForm()
             {
@@ -33,21 +38,32 @@ namespace PairingInspect
             RadMessageBox.ThemeName = (new Telerik.WinControls.Themes.Office2010BlackTheme()).ThemeName;
             if (this.DesignMode)
                 return;
+            new CTAirlineHeader().Fill(); // always read ah first.
             prg = new CTPairing();
             MinDayNameResolver.LoadDisplayNames(prg.Connection);
+
+            crewOnPairingLookup = new CTCrewOnPairing();
+            CTEmployees employees = new CTEmployees();
+            employees.FillAll(); // includes inactive/terminated crew, not just currently-active -- a pairing can reference either
+            crewOnPairingLookup.GetEmpName = employees.GetLastFirstname;
+            openPositionsLookup = new CTOTs();
             minDayCriticalMessages = new List<string>();
+            SetupCrewGrid();
             SetupGrid();
             SetupExceptionsGrid();
             SetupLaunchCtwpmButton();
             SetupSecuritySessionTimer();
             txtPairingID.Text = Properties.Settings.Default.LastPairingID;
-            txtPairingDate.Text = PairingDateToDisplay(Properties.Settings.Default.LastPairingDate);
-            txtExceptionsFromDate.Text = PairingDateToDisplay(Properties.Settings.Default.LastExceptionsFromDate);
-            txtExceptionsToDate.Text = PairingDateToDisplay(Properties.Settings.Default.LastExceptionsToDate);
+            txtPairingDate.NullableValue = InternalDateToNullable(Properties.Settings.Default.LastPairingDate);
+            txtExceptionsFromDate.NullableValue = InternalDateToNullable(Properties.Settings.Default.LastExceptionsFromDate);
+            txtExceptionsToDate.NullableValue = InternalDateToNullable(Properties.Settings.Default.LastExceptionsToDate);
             RefreshRecentComboBox();
 
-            if (!string.IsNullOrWhiteSpace(txtPairingID.Text) && !string.IsNullOrWhiteSpace(txtPairingDate.Text))
+            if (!string.IsNullOrWhiteSpace(txtPairingID.Text) && txtPairingDate.NullableValue.HasValue)
                 btnLookUp_Click(this, EventArgs.Empty);
+
+            if (txtExceptionsFromDate.NullableValue.HasValue && txtExceptionsToDate.NullableValue.HasValue)
+                btnFindExceptions_Click(this, EventArgs.Empty);
             }
 
         // CTW.exe force-closes apps it launches directly (WM_CLOSE) when it shuts down,
@@ -108,6 +124,39 @@ namespace PairingInspect
             minDayCriticalMessages.Add("[" + args.Status + "] " + args.Message);
             }
 
+        private void SetupCrewGrid()
+            {
+            crewGrid = new RadGridView();
+            crewGrid.Dock = DockStyle.Fill;
+            crewGrid.ShowGroupPanel = false;
+            crewGrid.EnableSorting = false;
+            crewGrid.MasterTemplate.AutoGenerateColumns = false;
+            crewGrid.MasterTemplate.AllowAddNewRow = false;
+            crewGrid.MasterTemplate.AllowDeleteRow = false;
+            crewGrid.MasterTemplate.ShowRowHeaderColumn = false; // hides the pin/select/delete indicator column -- not appropriate for this read-only grid
+            crewGrid.AllowColumnReorder = false;
+            crewGrid.Columns.Add(new GridViewTextBoxColumn("PairingPos", "PairingPos") { HeaderText = "Position", TextAlignment = ContentAlignment.MiddleCenter, Width = 74 });
+            crewGrid.Columns.Add(new GridViewTextBoxColumn("EmpNum", "EmpNum") { HeaderText = "Emp #", TextAlignment = ContentAlignment.MiddleCenter, Width = 76 });
+            crewGrid.Columns.Add(new GridViewTextBoxColumn("LastFirstName", "LastFirstName") { HeaderText = "Name", TextAlignment = ContentAlignment.MiddleCenter, Width = 130 });
+            crewGrid.Columns.Add(new GridViewTextBoxColumn("AssignCode", "AssignCode") { HeaderText = "Assign Code", TextAlignment = ContentAlignment.MiddleCenter, Width = 91 });
+            crewGrid.Columns.Add(new GridViewTextBoxColumn("PairingLineType", "PairingLineType") { HeaderText = "Line Type", TextAlignment = ContentAlignment.MiddleCenter, Width = 53 }); // 20px narrower than its resized width, leaving just enough room for the vertical scrollbar without triggering a horizontal one
+
+            pnlCrewGrid.Controls.Add(crewGrid);
+            }
+
+        // Display-only merge of assigned crew (CrewMemOnPairing, from MP) and open positions
+        // (OTPM, from OT) into one shape crewGrid can bind to -- keeps both data-access types
+        // clean rather than teaching CrewMemOnPairing about positions that have no crew member.
+        public class CrewGridRow
+            {
+            public string PairingPos { get; set; }
+            public uint EmpNum { get; set; }
+            public string LastFirstName { get; set; }
+            public string AssignCode { get; set; }
+            public string PairingLineType { get; set; }
+            public bool IsOpen { get; set; }
+            }
+
         private void SetupGrid()
             {
             grid = new RadGridView();
@@ -119,6 +168,7 @@ namespace PairingInspect
             grid.EnableSorting = false;
             grid.MasterTemplate.AutoGenerateColumns = false;
             grid.MasterTemplate.AllowAddNewRow = false;
+            grid.MasterTemplate.ShowRowHeaderColumn = false; // hides the pin/select/delete indicator column -- not appropriate for this read-only grid
             grid.Columns.Add(new GridViewTextBoxColumn("DutyPeriod", "DutyPeriod") { HeaderText = "Duty", TextAlignment = ContentAlignment.MiddleCenter });
             grid.Columns.Add(new GridViewTextBoxColumn("Date", "Date") { HeaderText = "Date", TextAlignment = ContentAlignment.MiddleCenter });
             grid.Columns.Add(new GridViewTextBoxColumn("OA", "OA") { HeaderText = "OA", TextAlignment = ContentAlignment.MiddleCenter });
@@ -171,9 +221,23 @@ namespace PairingInspect
             // structural changes the per-column fingerprint can't see, like switching
             // to a grouped-column ViewDefinition.
             string currentFingerprint = GridColumnFingerprint();
-            if (File.Exists(GridLayoutPath) && File.Exists(GridFingerprintPath) &&
-                File.ReadAllText(GridFingerprintPath) == currentFingerprint)
-                grid.LoadLayout(GridLayoutPath);
+            if (!string.IsNullOrEmpty(Properties.Settings.Default.PairingGridLayout) &&
+                Properties.Settings.Default.PairingGridLayoutFingerprint == currentFingerprint)
+                {
+                byte[] layoutBytes = Convert.FromBase64String(Properties.Settings.Default.PairingGridLayout);
+                using (MemoryStream ms = new MemoryStream(layoutBytes))
+                    grid.LoadLayout(ms);
+                }
+            else
+                {
+                // One-time migration from the old shared-network-file layout scheme (pre-per-user-settings).
+                // FormClosing always re-saves into PairingGridLayout on exit, so this only ever fires once per user.
+                string oldLayoutPath = Path.Combine(Application.StartupPath, "PairingInspectGridLayout.xml");
+                string oldFingerprintPath = Path.Combine(Application.StartupPath, "PairingInspectGridLayout.fingerprint.txt");
+                if (File.Exists(oldLayoutPath) && File.Exists(oldFingerprintPath) &&
+                    File.ReadAllText(oldFingerprintPath) == currentFingerprint)
+                    grid.LoadLayout(oldLayoutPath);
+                }
 
             pnlGrid.Controls.Add(grid);
             }
@@ -185,10 +249,9 @@ namespace PairingInspect
             exceptionsGrid.ShowGroupPanel = false;
             exceptionsGrid.MasterTemplate.AutoGenerateColumns = false;
             exceptionsGrid.MasterTemplate.AllowAddNewRow = false;
+            exceptionsGrid.MasterTemplate.ShowRowHeaderColumn = false; // hides the pin/select/delete indicator column -- not appropriate for this read-only grid
             exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("PairingID", "PairingID") { HeaderText = "Pairing", TextAlignment = ContentAlignment.MiddleCenter });
             exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("PairingDate", "PairingDate") { HeaderText = "Pairing Date", TextAlignment = ContentAlignment.MiddleCenter });
-            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("ReportDate", "ReportDate") { HeaderText = "Report Date", TextAlignment = ContentAlignment.MiddleCenter });
-            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("ReportTime", "ReportTime") { HeaderText = "Report Time", TextAlignment = ContentAlignment.MiddleCenter });
             exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("EndDate", "EndDate") { HeaderText = "End Date", TextAlignment = ContentAlignment.MiddleCenter });
             exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("RaisedDate", "RaisedDate") { HeaderText = "Raised Date", TextAlignment = ContentAlignment.MiddleCenter });
             exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("RaisedTime", "RaisedTime") { HeaderText = "Raised Time", TextAlignment = ContentAlignment.MiddleCenter });
@@ -198,13 +261,28 @@ namespace PairingInspect
             modifyColumn.HeaderText = "";
             modifyColumn.UseDefaultText = true;
             modifyColumn.DefaultText = "Modify";
+            modifyColumn.TextAlignment = ContentAlignment.MiddleCenter;
             exceptionsGrid.Columns.Add(modifyColumn);
             exceptionsGrid.CommandCellClick += ExceptionsGrid_CommandCellClick;
 
             string currentFingerprint = ExceptionsGridColumnFingerprint();
-            if (File.Exists(ExceptionsGridLayoutPath) && File.Exists(ExceptionsGridFingerprintPath) &&
-                File.ReadAllText(ExceptionsGridFingerprintPath) == currentFingerprint)
-                exceptionsGrid.LoadLayout(ExceptionsGridLayoutPath);
+            if (!string.IsNullOrEmpty(Properties.Settings.Default.ExceptionsGridLayout) &&
+                Properties.Settings.Default.ExceptionsGridLayoutFingerprint == currentFingerprint)
+                {
+                byte[] layoutBytes = Convert.FromBase64String(Properties.Settings.Default.ExceptionsGridLayout);
+                using (MemoryStream ms = new MemoryStream(layoutBytes))
+                    exceptionsGrid.LoadLayout(ms);
+                }
+            else
+                {
+                // One-time migration from the old shared-network-file layout scheme (pre-per-user-settings).
+                // FormClosing always re-saves into ExceptionsGridLayout on exit, so this only ever fires once per user.
+                string oldLayoutPath = Path.Combine(Application.StartupPath, "PairingInspectExceptionsGridLayout.xml");
+                string oldFingerprintPath = Path.Combine(Application.StartupPath, "PairingInspectExceptionsGridLayout.fingerprint.txt");
+                if (File.Exists(oldLayoutPath) && File.Exists(oldFingerprintPath) &&
+                    File.ReadAllText(oldFingerprintPath) == currentFingerprint)
+                    exceptionsGrid.LoadLayout(oldLayoutPath);
+                }
 
             pnlExceptionsGrid.Controls.Add(exceptionsGrid);
             }
@@ -217,16 +295,6 @@ namespace PairingInspect
             if (row == null)
                 return;
             LaunchCtwpm(CtwpmSelectionAutomator.FunctionModify, row.PairingID, row.PairingDateRaw);
-            }
-
-        private static string ExceptionsGridLayoutPath
-            {
-            get { return Path.Combine(Application.StartupPath, "PairingInspectExceptionsGridLayout.xml"); }
-            }
-
-        private static string ExceptionsGridFingerprintPath
-            {
-            get { return Path.Combine(Application.StartupPath, "PairingInspectExceptionsGridLayout.fingerprint.txt"); }
             }
 
         private const string ExceptionsGridSchemaVersion = "v1";
@@ -244,8 +312,6 @@ namespace PairingInspect
             // Internal YYYYMMDD form of PairingDate -- CtwpmSelectionAutomator.Launch needs
             // this format, not the MM/DD/YY the grid displays.
             public string PairingDateRaw { get; set; }
-            public string ReportDate { get; set; }
-            public string ReportTime { get; set; }
             public string EndDate { get; set; }
             public string RaisedDate { get; set; }
             public string RaisedTime { get; set; }
@@ -262,16 +328,18 @@ namespace PairingInspect
 
         private void btnFindExceptions_Click(object sender, EventArgs e)
             {
+            btnFindExceptions.Enabled = false;
+            btnFindExceptions.Refresh(); // read below is synchronous, so force the disabled state to paint before it blocks the UI thread
             try
                 {
-                string fromDate = PairingDateToInternal(txtExceptionsFromDate.Text.Trim());
-                string toDate = PairingDateToInternal(txtExceptionsToDate.Text.Trim());
+                string fromDate = NullableDateToInternal(txtExceptionsFromDate.NullableValue);
+                string toDate = NullableDateToInternal(txtExceptionsToDate.NullableValue);
 
                 List<PXExceptionRow> rows = new List<PXExceptionRow>();
                 using (OleDbCommand cmd = prg.Connection.CreateCommand())
                     {
                     cmd.CommandText = "SELECT Prgid_Prgno_Base+Prgid_Prgno_Eqpt+Prgid_Prgno_3+Prgid_Prgno_4_6 as PrgNo, " +
-                        "Prgid_Prgdate, Report_Date, Report_Time, Enddate, RaisedDate, RaisedTime, Updateid_Updempno " +
+                        "Prgid_Prgdate, Enddate, RaisedDate, RaisedTime, Updateid_Updempno " +
                         "FROM PX WHERE ErrorNo_0 = ? AND Prgid_Prgdate >= ? AND Prgid_Prgdate <= ?";
                     cmd.Parameters.AddWithValue("errorNo", 6500);
                     cmd.Parameters.AddWithValue("fromDate", fromDate);
@@ -286,8 +354,6 @@ namespace PairingInspect
                                 PairingID = reader["PrgNo"].ToString().Trim(),
                                 PairingDate = PairingDateToDisplay(rawPairingDate),
                                 PairingDateRaw = rawPairingDate,
-                                ReportDate = PairingDateToDisplay(reader["Report_Date"].ToString()),
-                                ReportTime = FormatHHMM(Convert.ToInt32(reader["Report_Time"])),
                                 EndDate = PairingDateToDisplay(reader["Enddate"].ToString()),
                                 RaisedDate = PairingDateToDisplay(reader["RaisedDate"].ToString()),
                                 RaisedTime = FormatRaisedTime(Convert.ToInt32(reader["RaisedTime"])),
@@ -302,6 +368,10 @@ namespace PairingInspect
             catch (Exception ex)
                 {
                 RadMessageBox.Show("Error finding exceptions: " + ex.Message);
+                }
+            finally
+                {
+                btnFindExceptions.Enabled = true;
                 }
             }
 
@@ -339,11 +409,14 @@ namespace PairingInspect
                     e.CellElement.ResetValue(LightVisualElement.BackColorProperty, ValueResetFlags.Local);
                     }
 
+                bool isDeptTimeColumn = e.Column != null && e.Column.Name == "DeptTime";
                 bool isArrvTimeColumn = e.Column != null && e.Column.Name == "ArrvTime";
 
                 if ((isCreditColumn && (row.RowKind == "Duty" || row.RowKind == "Totals")) ||
                     (isDutySummaryColumn && row.RowKind == "Duty") ||
-                    (isArrvTimeColumn && row.RowKind == "Totals"))
+                    (isArrvTimeColumn && row.RowKind == "Totals") ||
+                    (isDeptTimeColumn && row.RowKind == "Leg" && row.DeptTimeIsActual) ||
+                    (isArrvTimeColumn && row.RowKind == "Leg" && row.ArrvTimeIsActual))
                     e.CellElement.Font = new Font(e.CellElement.Font, FontStyle.Bold);
                 else
                     e.CellElement.ResetValue(LightVisualElement.FontProperty, ValueResetFlags.Local);
@@ -375,16 +448,6 @@ namespace PairingInspect
                 }
             }
 
-        private static string GridLayoutPath
-            {
-            get { return Path.Combine(Application.StartupPath, "PairingInspectGridLayout.xml"); }
-            }
-
-        private static string GridFingerprintPath
-            {
-            get { return Path.Combine(Application.StartupPath, "PairingInspectGridLayout.fingerprint.txt"); }
-            }
-
         // Bump this whenever a structural change isn't captured by the per-column
         // fingerprint below -- e.g. switching ViewDefinition (plain columns vs.
         // grouped-column headers), which the saved layout also can't distinguish
@@ -400,14 +463,25 @@ namespace PairingInspect
         private void PairingInspectForm_FormClosing(object sender, FormClosingEventArgs e)
             {
             securitySessionTimer.Stop();
-            grid.SaveLayout(GridLayoutPath);
-            File.WriteAllText(GridFingerprintPath, GridColumnFingerprint());
-            exceptionsGrid.SaveLayout(ExceptionsGridLayoutPath);
-            File.WriteAllText(ExceptionsGridFingerprintPath, ExceptionsGridColumnFingerprint());
+
+            using (MemoryStream ms = new MemoryStream())
+                {
+                grid.SaveLayout(ms);
+                Properties.Settings.Default.PairingGridLayout = Convert.ToBase64String(ms.ToArray());
+                }
+            Properties.Settings.Default.PairingGridLayoutFingerprint = GridColumnFingerprint();
+
+            using (MemoryStream ms = new MemoryStream())
+                {
+                exceptionsGrid.SaveLayout(ms);
+                Properties.Settings.Default.ExceptionsGridLayout = Convert.ToBase64String(ms.ToArray());
+                }
+            Properties.Settings.Default.ExceptionsGridLayoutFingerprint = ExceptionsGridColumnFingerprint();
+
             Properties.Settings.Default.LastPairingID = txtPairingID.Text;
-            Properties.Settings.Default.LastPairingDate = PairingDateToInternal(txtPairingDate.Text);
-            Properties.Settings.Default.LastExceptionsFromDate = PairingDateToInternal(txtExceptionsFromDate.Text);
-            Properties.Settings.Default.LastExceptionsToDate = PairingDateToInternal(txtExceptionsToDate.Text);
+            Properties.Settings.Default.LastPairingDate = NullableDateToInternal(txtPairingDate.NullableValue);
+            Properties.Settings.Default.LastExceptionsFromDate = NullableDateToInternal(txtExceptionsFromDate.NullableValue);
+            Properties.Settings.Default.LastExceptionsToDate = NullableDateToInternal(txtExceptionsToDate.NullableValue);
             Properties.Settings.Default.Save();
             }
 
@@ -415,14 +489,41 @@ namespace PairingInspect
             {
             try
                 {
-                string internalDate = PairingDateToInternal(txtPairingDate.Text.Trim());
+                string internalDate = NullableDateToInternal(txtPairingDate.NullableValue);
                 int result = prg.Assemble(txtPairingID.Text.Trim(), internalDate);
                 if (result == 0)
                     {
                     RadMessageBox.Show("Pairing not found: " + txtPairingID.Text + " " + txtPairingDate.Text);
                     return;
                     }
-                txtPairingDate.Text = PairingDateToDisplay(internalDate);
+
+                crewOnPairingLookup.FillActiveCrewOnPairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+                // crewOnPairingLookup.List (and openPositionsLookup.List below) are the same
+                // object references every call (cleared and refilled in place, not reallocated)
+                // -- rebinding an identical reference as DataSource is a no-op to the grid, so it
+                // never picks up the new pairing's data. Copying into a fresh list each time
+                // forces the rebind.
+                crewOnPairing = new List<CrewMemOnPairing>(crewOnPairingLookup.List);
+
+                openPositionsLookup.FillByPairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+
+                List<CrewGridRow> crewGridRows = new List<CrewGridRow>();
+                foreach (CrewMemOnPairing c in crewOnPairing)
+                    crewGridRows.Add(new CrewGridRow
+                        {
+                        PairingPos = c.PairingPos,
+                        EmpNum = c.EmpNum,
+                        LastFirstName = c.LastFirstName,
+                        AssignCode = c.AssignCode,
+                        PairingLineType = c.PairingLineType,
+                        IsOpen = false
+                        });
+                foreach (OTPM o in openPositionsLookup.List)
+                    for (int i = 0; i < o.OpenCount; i++)
+                        crewGridRows.Add(new CrewGridRow { PairingPos = o.Pos, EmpNum = 0, LastFirstName = "OPEN", IsOpen = true });
+
+                crewGrid.DataSource = crewGridRows;
+
                 MinDayMarkerStatus minDayMarkerStatus = MinDayNameResolver.Resolve(prg.PrgHdr.UpdateidUpdempno);
                 DisplayHeader(minDayMarkerStatus);
                 PopulateGrid(minDayMarkerStatus);
@@ -594,12 +695,14 @@ namespace PairingInspect
             {
             if (cboRecentPairings.SelectedItem == null)
                 return;
-            string entry = cboRecentPairings.SelectedItem.ToString();
+            string entry;
+            if (!recentPairingLookup.TryGetValue(cboRecentPairings.SelectedItem.ToString(), out entry))
+                return;
             int spaceIdx = entry.IndexOf(' ');
             if (spaceIdx <= 0)
                 return;
             txtPairingID.Text = entry.Substring(0, spaceIdx);
-            txtPairingDate.Text = PairingDateToDisplay(entry.Substring(spaceIdx + 1));
+            txtPairingDate.NullableValue = InternalDateToNullable(entry.Substring(spaceIdx + 1));
             btnLookUp_Click(sender, e);
             }
 
@@ -629,11 +732,19 @@ namespace PairingInspect
         private void RefreshRecentComboBox()
             {
             cboRecentPairings.SelectedIndexChanged -= cboRecentPairings_SelectedIndexChanged;
-            List<string> items = new List<string>();
+            List<string> displayItems = new List<string>();
+            recentPairingLookup = new Dictionary<string, string>();
             if (Properties.Settings.Default.RecentPairings != null)
-                foreach (string s in Properties.Settings.Default.RecentPairings)
-                    items.Add(s);
-            cboRecentPairings.DataSource = items;
+                foreach (string entry in Properties.Settings.Default.RecentPairings)
+                    {
+                    int spaceIdx = entry.IndexOf(' ');
+                    if (spaceIdx <= 0)
+                        continue;
+                    string display = entry.Substring(0, spaceIdx) + " " + CTDateFormat.DisplayWithoutYear(entry.Substring(spaceIdx + 1));
+                    displayItems.Add(display);
+                    recentPairingLookup[display] = entry;
+                    }
+            cboRecentPairings.DataSource = displayItems;
             cboRecentPairings.SelectedIndexChanged += cboRecentPairings_SelectedIndexChanged;
             }
 
@@ -686,6 +797,8 @@ namespace PairingInspect
             public string ArrvCity { get; set; }
             public string DeptTime { get; set; }
             public string ArrvTime { get; set; }
+            public bool DeptTimeIsActual { get; set; }
+            public bool ArrvTimeIsActual { get; set; }
             public string OA { get; set; }
             public string Deadhead { get; set; }
             public int Credit { get; set; }
@@ -729,11 +842,11 @@ namespace PairingInspect
             return time;
             }
 
+        // CTTimeFormat.MinsAsHHMM pads to a fixed 6-char width for legacy monospaced
+        // text-report alignment -- not wanted in a grid column, so trim it off here.
         private static string FormatHHMM(int totalMinutes)
             {
-            int hours = totalMinutes / 60;
-            int mins = totalMinutes % 60;
-            return string.Format("{0:D2}:{1:D2}", hours, mins);
+            return CTTimeFormat.MinsAsHHMM(totalMinutes).TrimStart();
             }
 
         // Same as FormatHHMM but without zero-padding the hours -- used for the
@@ -752,18 +865,20 @@ namespace PairingInspect
             return internalDate.Substring(4, 2) + "/" + internalDate.Substring(6, 2);
             }
 
-        // Pairing date field: displayed/typed as MM/DD/YY (slashes optional on input),
-        // stored everywhere else (settings, recent list, Assemble()) as CT's internal
-        // YYYYMMDD. These two convert between the two -- always convert at the boundary
-        // rather than letting either format leak into the wrong place.
-        private static string PairingDateToInternal(string mmddyyInput)
+        // The date pickers hold a DateTime? (null when empty); everywhere else the date is
+        // stored as CT's internal YYYYMMDD string (settings, recent list, Assemble()). These
+        // two convert between the two -- always convert at the boundary rather than letting
+        // either representation leak into the wrong place.
+        private static string NullableDateToInternal(DateTime? date)
             {
-            string digits = new string(mmddyyInput.Where(char.IsDigit).ToArray());
-            if (digits.Length == 6)
-                return "20" + digits.Substring(4, 2) + digits.Substring(0, 2) + digits.Substring(2, 2);
-            if (digits.Length == 8)
-                return digits;
-            return mmddyyInput;
+            return date.HasValue ? CTDateFormat.CTInternal(date.Value) : "";
+            }
+
+        private static DateTime? InternalDateToNullable(string internalDate)
+            {
+            if (string.IsNullOrEmpty(internalDate) || internalDate.Length != 8)
+                return null;
+            return CTDateFormat.AsDateTime(internalDate);
             }
 
         private static string PairingDateToDisplay(string internalDate)
@@ -822,8 +937,10 @@ namespace PairingInspect
                             FlightNum = airLeg.FlightNum,
                             DeptCity = airLeg.DeptCity,
                             ArrvCity = airLeg.ArrvCity,
-                            DeptTime = airLeg.SkedDeptTimeasHHMM,
-                            ArrvTime = airLeg.SkedArrvTimeasHHMM,
+                            DeptTime = airLeg.LatestDept.AsDisplayTime,
+                            ArrvTime = airLeg.LatestArrv.AsDisplayTime,
+                            DeptTimeIsActual = airLeg.LatestDept.SEA == SEAType.Act,
+                            ArrvTimeIsActual = airLeg.LatestArrv.SEA == SEAType.Act,
                             Credit = legCredit
                             });
                         }
@@ -839,8 +956,10 @@ namespace PairingInspect
                             FlightNum = nfLeg.TransCode,
                             DeptCity = nfLeg.DeptCity,
                             ArrvCity = nfLeg.ArrvCity,
-                            DeptTime = nfLeg.SkedDeptTimeasHHMM,
-                            ArrvTime = nfLeg.SkedArrvTimeasHHMM,
+                            DeptTime = nfLeg.LatestDept.AsDisplayTime,
+                            ArrvTime = nfLeg.LatestArrv.AsDisplayTime,
+                            DeptTimeIsActual = nfLeg.LatestDept.SEA == SEAType.Act,
+                            ArrvTimeIsActual = nfLeg.LatestArrv.SEA == SEAType.Act,
                             OA = nfLeg.AirlineCode,
                             Deadhead = nfLeg.DeadheadCode,
                             Credit = nfLeg.Credit
@@ -858,8 +977,10 @@ namespace PairingInspect
                             FlightNum = oaLeg.FlightNum,
                             DeptCity = oaLeg.DeptCity,
                             ArrvCity = oaLeg.ArrvCity,
-                            DeptTime = oaLeg.SkedDeptTimeasHHMM,
-                            ArrvTime = oaLeg.SkedArrvTimeasHHMM,
+                            DeptTime = oaLeg.LatestDept.AsDisplayTime,
+                            ArrvTime = oaLeg.LatestArrv.AsDisplayTime,
+                            DeptTimeIsActual = oaLeg.LatestDept.SEA == SEAType.Act,
+                            ArrvTimeIsActual = oaLeg.LatestArrv.SEA == SEAType.Act,
                             OA = oaLeg.AirlineCode,
                             Deadhead = oaLeg.DeadheadCode,
                             Credit = oaLeg.Credit
@@ -872,7 +993,6 @@ namespace PairingInspect
                 MinDayAmount minDay = MinDayDiffCalculator.CalculateForDuty(duty, prg.PrgHdr.PrgDate, prg.PrgHdr.CrewType, minDayMarkerStatus, legCreditSum);
                 rows.Add(new InspectRow
                     {
-                    DutyPeriod = duty.DutyPeriod.ToString(),
                     RowKind = "Duty",
                     Credit = duty.ActCredit,
                     CreditDeltaAmount = minDay.Credit,
