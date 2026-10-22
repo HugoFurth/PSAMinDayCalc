@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Data.OleDb;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Windows.Forms;
 using SFIConfigUtils;
 using SFICTDataAccess;
@@ -98,6 +100,14 @@ namespace PairingInspect
                 }
             }
 
+        // Guards against running against a stale MinDayProcess.dll -- e.g. the copy in
+        // D:\SFI\EXE\ is dated 2022-12-05 and predates the Trip Rig always-compute fix
+        // (see memory: mindaycalc-triprig-always-compute-fix) and other real behavior
+        // changes, despite AssemblyVersion never having been bumped before now. 1.0.1.29
+        // is the first version containing that fix -- anything below it is missing real
+        // corrections, not just a cosmetic difference.
+        private static readonly Version MinRequiredMinDayProcessVersion = new Version(1, 0, 1, 29);
+
         // Created on first use rather than in the constructor -- setup (bid periods,
         // config/marker loading) is non-trivial and not every session ends up
         // recalculating a min day. One instance lives for the rest of the form's
@@ -107,8 +117,15 @@ namespace PairingInspect
             {
             if (minDayProcess == null)
                 {
+                Version actualVersion = Assembly.GetAssembly(typeof(MinDayProcess)).GetName().Version;
+                if (actualVersion < MinRequiredMinDayProcessVersion)
+                    throw new InvalidOperationException(
+                        "MinDayProcess.dll version " + actualVersion + " is older than the minimum required " +
+                        MinRequiredMinDayProcessVersion + ". Update MinDayProcess.dll before using Min Day features.");
+
                 minDayProcess = new MinDayProcess((int)CTSecurity.UserID());
                 minDayProcess.StatusUpdate += MinDayProcess_StatusUpdate;
+                minDayProcess.PairingProcess += MinDayProcess_PairingProcess;
                 }
             return minDayProcess;
             }
@@ -122,6 +139,19 @@ namespace PairingInspect
         private void MinDayProcess_StatusUpdate(object sender, MinDayStatusEventArgs args)
             {
             minDayCriticalMessages.Add("[" + args.Status + "] " + args.Message);
+            }
+
+        // Fires once per ProcessPairing call (separate from StatusUpdate's free-text
+        // trace) with the actual outcome: whether the pairing was bypassed and which
+        // duty periods, if any, were modified. Appended to the same trace list so both
+        // events show up together in one place for the user.
+        private void MinDayProcess_PairingProcess(object sender, PairingProcessInfoEventArgs args)
+            {
+            string modifiedDuties = (args.ModifiedDutiesList != null && args.ModifiedDutiesList.Count > 0)
+                ? string.Join(",", args.ModifiedDutiesList)
+                : "none";
+            minDayCriticalMessages.Add("[Process] " + args.PairingID + " " + args.PairingDate +
+                " Bypassed=" + args.Bypassed + " ModifiedDuties=" + modifiedDuties);
             }
 
         private void SetupCrewGrid()
@@ -412,9 +442,9 @@ namespace PairingInspect
                 bool isDeptTimeColumn = e.Column != null && e.Column.Name == "DeptTime";
                 bool isArrvTimeColumn = e.Column != null && e.Column.Name == "ArrvTime";
 
-                if ((isCreditColumn && (row.RowKind == "Duty" || row.RowKind == "Totals")) ||
+                if ((isCreditColumn && (row.RowKind == "Duty" || row.RowKind == "Totals" || row.RowKind == "LayoverCredit" || row.RowKind == "COCredit")) ||
                     (isDutySummaryColumn && row.RowKind == "Duty") ||
-                    (isArrvTimeColumn && row.RowKind == "Totals") ||
+                    (isArrvTimeColumn && (row.RowKind == "Totals" || row.RowKind == "LayoverCredit" || row.RowKind == "COCredit")) ||
                     (isDeptTimeColumn && row.RowKind == "Leg" && row.DeptTimeIsActual) ||
                     (isArrvTimeColumn && row.RowKind == "Leg" && row.ArrvTimeIsActual))
                     e.CellElement.Font = new Font(e.CellElement.Font, FontStyle.Bold);
@@ -535,11 +565,6 @@ namespace PairingInspect
                 }
             }
 
-        private void btnQueueToCrewPost_Click(object sender, EventArgs e)
-            {
-            // TODO: implement
-            }
-
         private void btnRecalculateMinDay_Click(object sender, EventArgs e)
             {
             if (prg.PrgHdr == null)
@@ -657,7 +682,11 @@ namespace PairingInspect
 
         private void itemPrgInquire_Click(object sender, EventArgs e)
             {
-            LaunchCtwpm(CtwpmSelectionAutomator.FunctionInquire);
+            // Inquire can still leave the pairing changed underneath us (e.g. an Evaluate
+            // run from CTWPM's pairing screen), so refresh once the user closes it --
+            // Modify intentionally doesn't get this, since its own flow already expects
+            // the user to come back and re-look-up manually.
+            LaunchCtwpm(CtwpmSelectionAutomator.FunctionInquire, refreshOnExit: true);
             }
 
         private void itemPrgModify_Click(object sender, EventArgs e)
@@ -665,23 +694,61 @@ namespace PairingInspect
             LaunchCtwpm(CtwpmSelectionAutomator.FunctionModify);
             }
 
-        private void LaunchCtwpm(string function)
+        // Silent, no-interaction Evaluate -- launches CTWPM in Inquire mode, auto-clicks past the
+        // selection dialog, finds and clicks the pairing screen's "Eval&uate" button (moved
+        // off-screen first so the user never sees it), then closes the window automatically. See
+        // CtwpmSelectionAutomator.LaunchAndEvaluate for why this specific approach (not a
+        // minimized launch, not a minimized click) is the one that actually works. Always
+        // refreshes on exit since the whole point is to change the pairing's evaluated state.
+        private void btnEvaluatePairing_Click(object sender, EventArgs e)
+            {
+            if (prg.PrgHdr == null)
+                return;
+            try
+                {
+                string ctExeDir = SFIConfig.AppSetting("CTEXEDIR");
+                string prgID = prg.PrgHdr.PrgID;
+                string prgDate = prg.PrgHdr.PrgDate;
+                Process ctwpmProcess = CtwpmSelectionAutomator.LaunchAndEvaluate(ctExeDir, prgID, prgDate);
+                ctwpmProcess.EnableRaisingEvents = true;
+                ctwpmProcess.Exited += (s, args) => RefreshAfterCtwpmExit(prgID, prgDate);
+                // LaunchAndEvaluate already ran the whole click/close sequence before returning,
+                // so the process may have already exited by the time we subscribe above -- Exited
+                // does not fire retroactively for a transition that already happened, so check
+                // directly rather than risk silently missing the refresh.
+                if (ctwpmProcess.HasExited)
+                    RefreshAfterCtwpmExit(prgID, prgDate);
+                }
+            catch (Exception ex)
+                {
+                RadMessageBox.Show("Failed to launch CTWPM: " + ex.Message);
+                }
+            }
+
+        private void LaunchCtwpm(string function, bool refreshOnExit = false)
             {
             if (prg.PrgHdr != null)
-                LaunchCtwpm(function, prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+                LaunchCtwpm(function, prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate, refreshOnExit);
             else
-                LaunchCtwpm(function, null, null);
+                LaunchCtwpm(function, null, null, refreshOnExit);
             }
 
         // Used directly by the Min Day Exceptions grid's Modify button, which acts on
         // whichever pairing is in that row -- not necessarily the one loaded in prg.
-        private void LaunchCtwpm(string function, string prgID, string prgDate)
+        private void LaunchCtwpm(string function, string prgID, string prgDate, bool refreshOnExit = false)
             {
             try
                 {
                 string ctExeDir = SFIConfig.AppSetting("CTEXEDIR");
                 if (prgID != null)
-                    CtwpmSelectionAutomator.Launch(ctExeDir, function, prgID, prgDate);
+                    {
+                    Process ctwpmProcess = CtwpmSelectionAutomator.Launch(ctExeDir, function, prgID, prgDate);
+                    if (refreshOnExit)
+                        {
+                        ctwpmProcess.EnableRaisingEvents = true;
+                        ctwpmProcess.Exited += (s, args) => RefreshAfterCtwpmExit(prgID, prgDate);
+                        }
+                    }
                 else
                     CtwpmSelectionAutomator.Launch(ctExeDir);
                 }
@@ -689,6 +756,35 @@ namespace PairingInspect
                 {
                 RadMessageBox.Show("Failed to launch CTWPM: " + ex.Message);
                 }
+            }
+
+        // Fires on a threadpool thread when CTWPM exits -- marshal back before touching
+        // any UI. Only refreshes if the pairing currently on screen is still the one that
+        // was sent to CTWPM; if the user looked up something else in the meantime, leave
+        // it alone rather than clobbering what they're now looking at.
+        private void RefreshAfterCtwpmExit(string prgID, string prgDate)
+            {
+            if (IsDisposed || !IsHandleCreated)
+                return;
+            BeginInvoke((Action)(() =>
+                {
+                if (IsDisposed)
+                    return;
+                if (prg.PrgHdr == null || prg.PrgHdr.PrgID != prgID || prg.PrgHdr.PrgDate != prgDate)
+                    return;
+
+                try
+                    {
+                    prg.Assemble(prgID, prgDate);
+                    MinDayMarkerStatus minDayMarkerStatus = MinDayNameResolver.Resolve(prg.PrgHdr.UpdateidUpdempno);
+                    DisplayHeader(minDayMarkerStatus);
+                    PopulateGrid(minDayMarkerStatus);
+                    }
+                catch (Exception ex)
+                    {
+                    RadMessageBox.Show("Error refreshing pairing: " + ex.Message);
+                    }
+                }));
             }
 
         private void cboRecentPairings_SelectedIndexChanged(object sender, Telerik.WinControls.UI.Data.PositionChangedEventArgs e)
@@ -1016,6 +1112,30 @@ namespace PairingInspect
                 CreditDeltaAmount = tripRig,
                 Note = tripRig > 0 ? "Trip Rig" : ""
                 });
+
+            // Both surfaced separately from the Totals row because the CO credit field has
+            // a known history of being wrong/stale (see mindaycalc-cocredit-block-invariant
+            // memory) -- showing the raw stored value next to the freshly-computed layover
+            // bonus lets the user spot a mismatch during analysis instead of trusting either
+            // silently. Only shown when applicable so a non-carry-over pairing's grid looks
+            // exactly as it did before this was added.
+            int layoverCredit = GetMinDayProcess().ComputeLayoverCreditForDisplay(prg, dutiesByPeriod);
+            if (layoverCredit > 0)
+                rows.Add(new InspectRow
+                    {
+                    RowKind = "LayoverCredit",
+                    ArrvTime = "Layover Credit:",
+                    Credit = layoverCredit
+                    });
+
+            int coCredit = prg.PrgHdr.ActCreditCO;
+            if (coCredit != 0)
+                rows.Add(new InspectRow
+                    {
+                    RowKind = "COCredit",
+                    ArrvTime = "CO Credit:",
+                    Credit = coCredit
+                    });
 
             grid.DataSource = rows;
             }

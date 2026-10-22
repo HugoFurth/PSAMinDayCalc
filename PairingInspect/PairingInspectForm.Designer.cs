@@ -43,7 +43,7 @@ namespace PairingInspect
             this.lblCrewTypeValue = new System.Windows.Forms.Label();
             this.lblMinDayStatusTitle = new System.Windows.Forms.Label();
             this.lblMinDayStatusValue = new System.Windows.Forms.Label();
-            this.btnQueueToCrewPost = new Telerik.WinControls.UI.RadButton();
+            this.btnEvaluatePairing = new Telerik.WinControls.UI.RadButton();
             this.btnRecalculateMinDay = new Telerik.WinControls.UI.RadButton();
             this.btnLaunchCTWPM = new Telerik.WinControls.UI.RadDropDownButton();
             this.tabMain = new Telerik.WinControls.UI.RadPageView();
@@ -170,23 +170,23 @@ namespace PairingInspect
             this.lblMinDayStatusValue.Name = "lblMinDayStatusValue";
             this.lblMinDayStatusValue.TabIndex = 14;
             //
-            // btnQueueToCrewPost
-            //
-            this.btnQueueToCrewPost.Location = new System.Drawing.Point(20, 110);
-            this.btnQueueToCrewPost.Name = "btnQueueToCrewPost";
-            this.btnQueueToCrewPost.Size = new System.Drawing.Size(150, 24);
-            this.btnQueueToCrewPost.TabIndex = 15;
-            this.btnQueueToCrewPost.Text = "Queue to CrewPost";
-            this.btnQueueToCrewPost.Click += new System.EventHandler(this.btnQueueToCrewPost_Click);
-            //
             // btnRecalculateMinDay
             //
-            this.btnRecalculateMinDay.Location = new System.Drawing.Point(180, 110);
+            this.btnRecalculateMinDay.Location = new System.Drawing.Point(20, 110);
             this.btnRecalculateMinDay.Name = "btnRecalculateMinDay";
             this.btnRecalculateMinDay.Size = new System.Drawing.Size(150, 24);
-            this.btnRecalculateMinDay.TabIndex = 16;
+            this.btnRecalculateMinDay.TabIndex = 15;
             this.btnRecalculateMinDay.Text = "Recalculate Min Day";
             this.btnRecalculateMinDay.Click += new System.EventHandler(this.btnRecalculateMinDay_Click);
+            //
+            // btnEvaluatePairing
+            //
+            this.btnEvaluatePairing.Location = new System.Drawing.Point(180, 110);
+            this.btnEvaluatePairing.Name = "btnEvaluatePairing";
+            this.btnEvaluatePairing.Size = new System.Drawing.Size(150, 24);
+            this.btnEvaluatePairing.TabIndex = 16;
+            this.btnEvaluatePairing.Text = "Evaluate Pairing";
+            this.btnEvaluatePairing.Click += new System.EventHandler(this.btnEvaluatePairing_Click);
             //
             // btnLaunchCTWPM
             //
@@ -194,7 +194,7 @@ namespace PairingInspect
             this.btnLaunchCTWPM.Name = "btnLaunchCTWPM";
             this.btnLaunchCTWPM.Size = new System.Drawing.Size(150, 24);
             this.btnLaunchCTWPM.TabIndex = 17;
-            this.btnLaunchCTWPM.Text = "CT Prg Function";
+            this.btnLaunchCTWPM.Text = "Pairing Function";
             this.btnLaunchCTWPM.Click += new System.EventHandler(this.btnLaunchCTWPM_Click);
             //
             // pnlCrewGrid
@@ -215,7 +215,7 @@ namespace PairingInspect
             //
             this.tabPageInspect.Controls.Add(this.pnlCrewGrid);
             this.tabPageInspect.Controls.Add(this.pnlGrid);
-            this.tabPageInspect.Controls.Add(this.btnQueueToCrewPost);
+            this.tabPageInspect.Controls.Add(this.btnEvaluatePairing);
             this.tabPageInspect.Controls.Add(this.btnRecalculateMinDay);
             this.tabPageInspect.Controls.Add(this.btnLaunchCTWPM);
             this.tabPageInspect.Controls.Add(this.lblStatusTitle);
@@ -343,7 +343,7 @@ namespace PairingInspect
         private System.Windows.Forms.Label lblCrewTypeValue;
         private System.Windows.Forms.Label lblMinDayStatusTitle;
         private System.Windows.Forms.Label lblMinDayStatusValue;
-        private Telerik.WinControls.UI.RadButton btnQueueToCrewPost;
+        private Telerik.WinControls.UI.RadButton btnEvaluatePairing;
         private Telerik.WinControls.UI.RadButton btnRecalculateMinDay;
         private Telerik.WinControls.UI.RadDropDownButton btnLaunchCTWPM;
         private Telerik.WinControls.UI.RadPageView tabMain;
