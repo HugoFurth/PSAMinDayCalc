@@ -19,7 +19,7 @@ namespace PairingInspect
         {
         // Config key is the field's own name (e.g. "MINDAY_APPLIED_USER") -- these
         // are literally TR09 marker user IDs, so the config key and the value it
-        // fills need no separate mapping name. Cached since SFIConfig.AppSettingRaw
+        // fills need no separate mapping name. Cached since MinDayConfig.AppSettingRaw
         // re-walks the config section on every call and these values never change
         // for the life of the process; without caching, a single pairing lookup in
         // the UI (IsKnownMinDayMarker + Resolve back-to-back) re-parses all four
@@ -31,7 +31,7 @@ namespace PairingInspect
             uint value;
             if (!_minDayUserCache.TryGetValue(fieldName, out value))
                 {
-                value = uint.Parse(SFIConfig.AppSettingRaw(fieldName));
+                value = uint.Parse(MinDayConfig.AppSettingRaw(fieldName));
                 _minDayUserCache[fieldName] = value;
                 }
             return value;

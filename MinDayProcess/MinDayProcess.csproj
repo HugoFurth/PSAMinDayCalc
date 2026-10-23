@@ -47,6 +47,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="MinDayMarkerUsers.cs" />
     <Compile Include="MinDayProcess.cs" />
     <Compile Include="PMByTimestampCheckList.cs" />
     <Compile Include="ProcessedLists.cs" />

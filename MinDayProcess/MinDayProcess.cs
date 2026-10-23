@@ -94,24 +94,6 @@ namespace MinDayProcessNS
             {
             }
 
-        // Config key is the field's own name (e.g. "MINDAY_APPLIED_USER") -- these
-        // are literally TR09 marker user IDs, so the config key and the field it
-        // fills need no separate mapping name. Cached since SFIConfig.AppSettingRaw
-        // re-walks the config section on every call and these values never change
-        // for the life of the process.
-        private static readonly Dictionary<string, uint> _minDayUserCache = new Dictionary<string, uint>();
-
-        private static uint GetMinDayUser(string fieldName)
-            {
-            uint value;
-            if (!_minDayUserCache.TryGetValue(fieldName, out value))
-                {
-                value = uint.Parse(SFIConfigUtils.SFIConfig.AppSettingRaw(fieldName));
-                _minDayUserCache[fieldName] = value;
-                }
-            return value;
-            }
-
         private MinDayProcess(int userID, bool useLiveSecurity)
             {
             try {
@@ -135,10 +117,38 @@ namespace MinDayProcessNS
                     throw new Exception("ExcludeableCodes not set");
                 _ExcludeableCodes = ExcludeableCodesToLoadProp.Split(';');
 
-                MINDAY_APPLIED_USER = GetMinDayUser("MINDAY_APPLIED_USER");
-                MINDAY_NO_UPDATE_NEEDED_USER = GetMinDayUser("MINDAY_NO_UPDATE_NEEDED_USER");
-                MINDAY_EXCEPTION_USER = GetMinDayUser("MINDAY_EXCEPTION_USER");
-                MINDAY_ERROR_USER = GetMinDayUser("MINDAY_ERROR_USER");
+                // Separate try/catch from the TR09 self-heal below -- so a config
+                // problem (MinDay.config missing/malformed) and a DB problem (can't
+                // reach TR09, insert failed) surface as distinguishable, actionable
+                // errors instead of one generic constructor failure.
+                try
+                    {
+                    MINDAY_APPLIED_USER = MinDayMarkerUsers.GetMinDayUser("MINDAY_APPLIED_USER");
+                    MINDAY_NO_UPDATE_NEEDED_USER = MinDayMarkerUsers.GetMinDayUser("MINDAY_NO_UPDATE_NEEDED_USER");
+                    MINDAY_EXCEPTION_USER = MinDayMarkerUsers.GetMinDayUser("MINDAY_EXCEPTION_USER");
+                    MINDAY_ERROR_USER = MinDayMarkerUsers.GetMinDayUser("MINDAY_ERROR_USER");
+                    }
+                catch (Exception ex)
+                    {
+                    throw new Exception("Failed to read MinDay marker user IDs from MinDay.config: " + ex.Message, ex);
+                    }
+
+                try
+                    {
+                    var markers = new Dictionary<uint, string>
+                        {
+                        { MINDAY_APPLIED_USER, "MinDay - Updated" },
+                        { MINDAY_NO_UPDATE_NEEDED_USER, "MinDay - No Update Needed" },
+                        { MINDAY_EXCEPTION_USER, "MinDay - Exception" },
+                        { MINDAY_ERROR_USER, "MinDay - Error" }
+                        };
+                    foreach (string message in MinDayMarkerUsers.EnsureExist(prg.Connection, markers))
+                        UpdateStatus(MinDayStatus.Warning, message);
+                    }
+                catch (Exception ex)
+                    {
+                    throw new Exception("Failed to verify/insert TR09 marker rows: " + ex.Message, ex);
+                    }
                 }
             catch (Exception)
                 {
@@ -249,6 +259,31 @@ namespace MinDayProcessNS
             return needsEval;
             }
 
+        // Read-only: computes what the multi-day-layover credit bonus would be for an
+        // already-assembled pairing, without applying or writing anything -- for display
+        // purposes (e.g. PairingInspect), so callers don't need their own duplicate copy
+        // of CalcMultiDayLayoverPay's iSpan/119-minute logic. Temporarily borrows this
+        // instance's prg/MINDAYCREDIT fields (both restored in finally) since
+        // CalcMultiDayLayoverPay reads them internally; safe for the single-threaded
+        // WinForms callers this exists for, but not safe to call concurrently.
+        public int ComputeLayoverCreditForDisplay(CTPairing forPairing, List<PairingDuty> duties)
+            {
+            CTPairing savedPrg = prg;
+            Int16 savedMinDayCredit = MINDAYCREDIT;
+            try
+                {
+                prg = forPairing;
+                MINDAYCREDIT = (string.Compare(forPairing.PrgHdr.PrgDate, "20220901") >= 0 && forPairing.PrgHdr.CrewType == "P")
+                    ? MINDAYCREDIT4HR : MINDAYCREDIT35HR;
+                return SumOfLayoverPay(CalcMultiDayLayoverPay(duties));
+                }
+            finally
+                {
+                prg = savedPrg;
+                MINDAYCREDIT = savedMinDayCredit;
+                }
+            }
+
         private void ProcessQueueForCrewPost(ABByTimestamp abts)
             {
             SaveABUserSettings(abts.Update_Date, abts.Update_Time.ToString());
@@ -296,12 +331,30 @@ namespace MinDayProcessNS
                 return false;
                 }
 
+            // Same guarantee as the Applied check above applies here too: the marker
+            // only survives if nothing has touched the pairing since MinDay last looked
+            // (any real change -- a dispatcher's edit, CrewPost syncing actuals -- writes
+            // its own empno over this column). Still marked "no update needed" means the
+            // floor condition is still absent, so there's nothing to re-derive. Kept as
+            // its own check (separate message) rather than folded into the Applied check
+            // above -- MINDAY_EXCEPTION_USER/MINDAY_ERROR_USER aren't covered yet, pending
+            // confirming the same logic should extend to them.
+            if (prg.PrgHdr.UpdateidUpdempno == MINDAY_NO_UPDATE_NEEDED_USER)
+                {
+                UpdateStatus(MinDayStatus.DetailedInfo, "Min day condition not present - skipping");
+                return false;
+                }
+
             // Interim rule pending confirmation with the customer: single-duty pairings are
-            // excluded from min day entirely (not just "no condition found"). FillByPSAMinCredit's
-            // batch pre-filter already excludes most of these (its hardcoded actcdt<210 check
-            // doesn't account for the 240/pilot threshold, so it's an imperfect proxy for this
-            // rule); enforcing it here directly makes the on-demand path match, and closes the
-            // gap for batch pairings that slipped through that pre-filter.
+            // excluded from min day entirely (not just "no condition found"). This check is
+            // the sole source of truth for that exclusion -- FillByPSAMinCredit's batch query
+            // used to duplicate it with a hardcoded actcdt<210 pre-filter, but that pre-filter
+            // didn't account for the 240/pilot threshold, so pilot single-duty pairings in the
+            // 210-239 range were silently dropped from the batch before ever reaching this
+            // check, leaving them with no MinDay marker at all (not even "no update needed").
+            // The pre-filter was removed (2026-08-06) so every non-cancelled pairing the batch
+            // considers reaches this check and gets a real marker; the actual min-day outcome
+            // for single-duty pairings is unchanged either way.
             if (prg.PrgHdr.NumDutyPeriods == 1)
                 {
                 UpdateStatus(MinDayStatus.DetailedInfo, "Single-duty pairing -- min day not applicable");
@@ -405,20 +458,20 @@ namespace MinDayProcessNS
                 }
             }
 
-            private int SumOfLayoverPay(List<LayoverModDuty> LayoverDuties)
+        private int SumOfLayoverPay(List<LayoverModDuty> LayoverDuties)
+            {
+            int TotalLayoverPay = 0;
+            if (LayoverDuties == null)
+                return 0;
+            else
                 {
-                int TotalLayoverPay = 0;
-                if (LayoverDuties == null)
-                    return 0;
-                else
-                    {
-                    foreach (LayoverModDuty l in LayoverDuties)
-                        TotalLayoverPay += l.LayoverPay;
-                    }
-            return TotalLayoverPay;
+                foreach (LayoverModDuty l in LayoverDuties)
+                    TotalLayoverPay += l.LayoverPay;
                 }
+            return TotalLayoverPay;
+            }
 
-            private List<LayoverModDuty> CalcMultiDayLayoverPay(List<PairingDuty> Duties)
+        private List<LayoverModDuty> CalcMultiDayLayoverPay(List<PairingDuty> Duties)
             {
             List<LayoverModDuty> LayoverList = new List<LayoverModDuty>();
             List<PairingDuty> pdList = prg.FindAllDutiesWithoutCode(Duties, _ExcludeableCodes);
@@ -466,7 +519,7 @@ namespace MinDayProcessNS
             }
 
 
-            private void AddCrewToEvalList(string prgID, string prgDate)
+        private void AddCrewToEvalList(string prgID, string prgDate)
             {
             // find all crew on this pairing and add to the eval queue
             foreach (PMByTimestamp p in pmtss.List.Where(x => x.EmpNum > 0 &&  x.PairingID == prgID && x.PairingDate == prgDate).ToList())
