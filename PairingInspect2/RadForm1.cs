@@ -347,27 +347,27 @@ namespace PairingInspect2
         }
 
         private void MinDayProcess_StatusUpdate(object sender, MinDayStatusEventArgs args)
-        {
+            {
             minDayCriticalMessages.Add("[" + args.Status + "] " + args.Message);
-        }
+            }
 
         private void MinDayProcess_PairingProcess(object sender, PairingProcessInfoEventArgs args)
-        {
+            {
             string modifiedDuties = (args.ModifiedDutiesList != null && args.ModifiedDutiesList.Count > 0)
                 ? string.Join(",", args.ModifiedDutiesList)
                 : "none";
             minDayCriticalMessages.Add("[Process] " + args.PairingID + " " + args.PairingDate +
                 " Bypassed=" + args.Bypassed + " ModifiedDuties=" + modifiedDuties);
-        }
+            }
 
         private void btnRecalculateMinDay_Click(object sender, EventArgs e)
-        {
+            {
             if (prg.PrgHdr == null)
                 return;
 
             minDayCriticalMessages.Clear();
             try
-            {
+                {
                 GetMinDayProcess().ProcessSinglePairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
 
                 // re-run the lookup so the marker/credit values just written reflect
@@ -379,12 +379,12 @@ namespace PairingInspect2
 
                 if (minDayCriticalMessages.Count > 0)
                     ShowMinDayTrace(string.Join(Environment.NewLine, minDayCriticalMessages));
-            }
+                }
             catch (Exception ex)
-            {
+                {
                 RadMessageBox.Show("Error recalculating min day: " + ex.Message);
+                }
             }
-        }
 
         // RadTextBox/RadForm rather than RadMessageBox -- the trace can run to many lines
         // and the user needs to select/copy it, which RadMessageBox doesn't support well.
@@ -500,6 +500,12 @@ namespace PairingInspect2
             lblStatusValue.Text = hdr.Canceled ? "Canceled" : "Active";
             lblCrewTypeValue.Text = CrewTypeDisplay(hdr.CrewType);
             lblMinDayStatusValue.Text = MinDayNameResolver.DisplayName(minDayMarkerStatus) + " (empno=" + hdr.UpdateidUpdempno + ")";
+            // Red when the marker isn't one of ours -- MinDay has either never considered
+            // this pairing, or a real touch since (a dispatcher edit, CrewPost syncing
+            // actuals) cleared whatever MinDay marker it had. Totals' LO delta is already
+            // gated on Applied specifically and won't show in this state; CO Credit and
+            // Trip Rig are real stored values either way, just not guaranteed current.
+            lblMinDayStatusValue.ForeColor = (minDayMarkerStatus == MinDayMarkerStatus.Unknown) ? Color.DarkRed : SystemColors.ControlText;
             btnRecalculateMinDay.Text = MinDayNameResolver.IsKnownMinDayMarker(hdr.UpdateidUpdempno)
                 ? "Recalculate Min Day" : "Calculate Min Day";
             LayoutHeaderLabels();
@@ -691,23 +697,59 @@ namespace PairingInspect2
             }
 
             int tripRig = prg.PrgHdr.ActTripRig;
+
+            // Trip Rig reads a real, currently-stored PM field -- true right now
+            // regardless of marker (it's whatever the last write, MinDay or native
+            // CrewPost Evaluate, actually left behind), so it's shown unconditionally.
+            //
+            // Layover Credit: ComputeLayoverCreditForDisplay now gates itself on
+            // Updateid_Updempno == MINDAY_APPLIED_USER internally (it's never
+            // written/stored anywhere until a real MinDay apply), so this call is
+            // unconditional -- the method is trusted to return 0 on its own when
+            // unapplied, rather than every caller having to remember to gate it.
+            int layoverCredit = GetMinDayProcess().ComputeLayoverCreditForDisplay(prg, dutiesByPeriod);
+            int creditDelta = tripRig + layoverCredit;
+
+            var creditDeltaBreakdown = new List<KeyValuePair<string, int>>();
+            var noteLabels = new List<string>();
+            if (layoverCredit > 0)
+                {
+                creditDeltaBreakdown.Add(new KeyValuePair<string, int>("LO", layoverCredit));
+                noteLabels.Add("LO");
+                }
+            if (tripRig > 0)
+                {
+                creditDeltaBreakdown.Add(new KeyValuePair<string, int>("Rig", tripRig));
+                noteLabels.Add("Rig");
+                }
+
             rows.Add(new InspectRow
             {
                 RowKind = "Totals",
                 ArrvTime = "Totals:",
-                Credit = totalCredit + tripRig,
-                CreditDeltaAmount = tripRig,
-                Note = tripRig > 0 ? "Trip Rig" : ""
+                Credit = totalCredit + creditDelta,
+                CreditDeltaAmount = creditDelta,
+                CreditDeltaBreakdown = creditDeltaBreakdown,
+                Note = string.Join("/", noteLabels)
             });
 
-            int layoverCredit = GetMinDayProcess().ComputeLayoverCreditForDisplay(prg, dutiesByPeriod);
-            if (layoverCredit > 0)
-                rows.Add(new InspectRow
-                {
-                    RowKind = "LayoverCredit",
-                    ArrvTime = "Layover Credit:",
-                    Credit = layoverCredit
-                });
+            // Double line (two stacked divider rows, same mechanism as the single
+            // DividerBeforeDuty/DividerAfterDuty bars between duties) to set TAFB
+            // visually apart as a distinct reference figure below Totals, not just
+            // another duty-level row.
+            rows.Add(new InspectRow { RowKind = "DividerAfterTotals" });
+            rows.Add(new InspectRow { RowKind = "DividerAfterTotals" });
+
+            // Lets the Rig delta above be eyeballed by hand: TAFB/4 (mentally) against
+            // Totals. Act, not Sked -- same field UpdateDutyCreditsAndPay's own TAFBRig
+            // formula actually uses (TAFBTotalCredit = round(ActTAFB/4)), so this is the
+            // real number the Rig figure is derived from, not an approximation of it.
+            rows.Add(new InspectRow
+            {
+                RowKind = "TAFB",
+                ArrvTime = "TAFB:",
+                Credit = prg.PrgHdr.ActTAFB
+            });
 
             int coCredit = prg.PrgHdr.ActCreditCO;
             if (coCredit != 0)
@@ -975,7 +1017,7 @@ namespace PairingInspect2
                 bool isCreditColumn = e.Column != null && (e.Column.Name == "Credit" || e.Column.Name == "CreditHHMM");
                 bool isDutySummaryColumn = e.Column != null && (e.Column.Name == "Report" || e.Column.Name == "Release" || e.Column.Name == "DutyTime");
 
-                if (row.RowKind == "DividerBeforeDuty" || row.RowKind == "DividerAfterDuty")
+                if (row.RowKind == "DividerBeforeDuty" || row.RowKind == "DividerAfterDuty" || row.RowKind == "DividerAfterTotals")
                 {
                     Color creditColor = row.RowKind == "DividerBeforeDuty" ? Color.LightGray : Color.Black;
                     e.CellElement.DrawFill = true;
@@ -992,9 +1034,9 @@ namespace PairingInspect2
                 bool isDeptTimeColumn = e.Column != null && e.Column.Name == "DeptTime";
                 bool isArrvTimeColumn = e.Column != null && e.Column.Name == "ArrvTime";
 
-                if ((isCreditColumn && (row.RowKind == "Duty" || row.RowKind == "Totals" || row.RowKind == "LayoverCredit" || row.RowKind == "COCredit")) ||
+                if ((isCreditColumn && (row.RowKind == "Duty" || row.RowKind == "Totals" || row.RowKind == "COCredit" || row.RowKind == "TAFB")) ||
                     (isDutySummaryColumn && row.RowKind == "Duty") ||
-                    (isArrvTimeColumn && (row.RowKind == "Totals" || row.RowKind == "LayoverCredit" || row.RowKind == "COCredit")) ||
+                    (isArrvTimeColumn && (row.RowKind == "Totals" || row.RowKind == "COCredit" || row.RowKind == "TAFB")) ||
                     (isDeptTimeColumn && row.RowKind == "Leg" && row.DeptTimeIsActual) ||
                     (isArrvTimeColumn && row.RowKind == "Leg" && row.ArrvTimeIsActual))
                     e.CellElement.Font = new Font(e.CellElement.Font, FontStyle.Bold);
@@ -1019,7 +1061,7 @@ namespace PairingInspect2
             if (e.RowElement.RowInfo.DataBoundItem is InspectRow)
             {
                 InspectRow row = (InspectRow)e.RowElement.RowInfo.DataBoundItem;
-                if (row.RowKind == "DividerBeforeDuty" || row.RowKind == "DividerAfterDuty")
+                if (row.RowKind == "DividerBeforeDuty" || row.RowKind == "DividerAfterDuty" || row.RowKind == "DividerAfterTotals")
                 {
                     e.RowElement.RowInfo.MinHeight = 4;
                     e.RowElement.RowInfo.MaxHeight = 4;
@@ -1070,14 +1112,25 @@ namespace PairingInspect2
             public string Deadhead { get; set; }
             public int Credit { get; set; }
             // Parenthesized amount shown before the total: the min-day top-up on
-            // Duty rows, or the trip rig included in the pairing total on the Totals row.
+            // Duty rows (single amount), or -- on the Totals row -- the combined sum
+            // of layover bonus + trip rig, itemized via CreditDeltaBreakdown below.
             public int CreditDeltaAmount { get; set; }
             public string CreditHHMM { get { return FormatHHMM(Credit); } }
+
+            // Totals-row only: each delta component labeled ("LO"/"Rig") with its own
+            // minutes. Only used to label amounts individually when there are 2+
+            // components to disambiguate -- with just one, the plain (+N) prefix is
+            // enough and Note already names which component it is, so no redundant
+            // label here. Null/empty on every other row kind, where CreditDeltaAmount's
+            // single-prefix display always applies.
+            public List<KeyValuePair<string, int>> CreditDeltaBreakdown { get; set; }
 
             public string CreditDisplay
             {
                 get
                 {
+                    if (CreditDeltaBreakdown != null && CreditDeltaBreakdown.Count > 1)
+                        return string.Join("", CreditDeltaBreakdown.Select(kv => "(+" + kv.Value + " " + kv.Key + ")")) + " " + Credit;
                     if (CreditDeltaAmount > 0)
                         return "(+" + CreditDeltaAmount + ") " + Credit;
                     return Credit.ToString();
@@ -1088,6 +1141,8 @@ namespace PairingInspect2
             {
                 get
                 {
+                    if (CreditDeltaBreakdown != null && CreditDeltaBreakdown.Count > 1)
+                        return string.Join("", CreditDeltaBreakdown.Select(kv => "(+" + FormatHHMMDelta(kv.Value) + " " + kv.Key + ")")) + " " + CreditHHMM;
                     if (CreditDeltaAmount > 0)
                         return "(+" + FormatHHMMDelta(CreditDeltaAmount) + ") " + CreditHHMM;
                     return CreditHHMM;

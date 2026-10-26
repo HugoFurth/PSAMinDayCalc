@@ -137,7 +137,7 @@ namespace MinDayProcessNS
                     {
                     var markers = new Dictionary<uint, string>
                         {
-                        { MINDAY_APPLIED_USER, "MinDay - Updated" },
+                        { MINDAY_APPLIED_USER, "MinDay - Applied" },
                         { MINDAY_NO_UPDATE_NEEDED_USER, "MinDay - No Update Needed" },
                         { MINDAY_EXCEPTION_USER, "MinDay - Exception" },
                         { MINDAY_ERROR_USER, "MinDay - Error" }
@@ -259,15 +259,23 @@ namespace MinDayProcessNS
             return needsEval;
             }
 
-        // Read-only: computes what the multi-day-layover credit bonus would be for an
-        // already-assembled pairing, without applying or writing anything -- for display
-        // purposes (e.g. PairingInspect), so callers don't need their own duplicate copy
-        // of CalcMultiDayLayoverPay's iSpan/119-minute logic. Temporarily borrows this
-        // instance's prg/MINDAYCREDIT fields (both restored in finally) since
-        // CalcMultiDayLayoverPay reads them internally; safe for the single-threaded
-        // WinForms callers this exists for, but not safe to call concurrently.
+        // Read-only: reports the multi-day-layover credit bonus for an already-assembled
+        // pairing, without applying or writing anything -- for display purposes (e.g.
+        // PairingInspect), so callers don't need their own duplicate copy of
+        // CalcMultiDayLayoverPay's iSpan/119-minute logic. Zero unless MinDay has
+        // actually applied to this pairing (Updateid_Updempno == MINDAY_APPLIED_USER):
+        // the bonus is never written/stored anywhere until a real UpdateDutyCreditsAndPay
+        // run computes and commits it, so reporting a nonzero amount for an unapplied
+        // pairing would describe credit that doesn't exist anywhere real yet. This is
+        // Inspect, not a projection -- a caller that genuinely wants a what-if preview of
+        // an unapplied pairing needs its own fresh computation (see PSAPBSX's
+        // PairingFileFormat.ComputeTripRigMinutes/ComputeLayoverBonusMinutes for that
+        // pattern), not this method.
         public int ComputeLayoverCreditForDisplay(CTPairing forPairing, List<PairingDuty> duties)
             {
+            if (forPairing.PrgHdr.UpdateidUpdempno != MINDAY_APPLIED_USER)
+                return 0;
+
             CTPairing savedPrg = prg;
             Int16 savedMinDayCredit = MINDAYCREDIT;
             try

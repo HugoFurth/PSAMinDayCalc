@@ -99,7 +99,17 @@ namespace PairingInspect2
                 string key = Encoding.GetEncoding(1252).GetString(keyBytes);
                 cmd.Parameters.AddWithValue("key", key);
                 object result = cmd.ExecuteScalar();
-                return result == null ? ("Employee " + empno) : result.ToString().Trim();
+                if (result == null) return "Employee " + empno;
+
+                // TR09 keeps the "MinDay - " prefix on all 4 marker rows for DB-level
+                // consistency (anyone browsing TR09 raw sees them grouped), but it's
+                // redundant in this UI -- the field showing it is already labeled
+                // "Min Day Status:". Strip it for display only; the DB text is untouched.
+                string username = result.ToString().Trim();
+                const string prefix = "MinDay - ";
+                if (username.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    username = username.Substring(prefix.Length);
+                return username;
                 }
             }
 
