@@ -106,5 +106,41 @@ namespace PairingInspect2.Properties
             get { return ((string)(this["ExceptionsGridLayoutFingerprint"])); }
             set { this["ExceptionsGridLayoutFingerprint"] = value; }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("0")]
+        public int PrintPreviewWidth
+        {
+            get { return ((int)(this["PrintPreviewWidth"])); }
+            set { this["PrintPreviewWidth"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("0")]
+        public int PrintPreviewHeight
+        {
+            get { return ((int)(this["PrintPreviewHeight"])); }
+            set { this["PrintPreviewHeight"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool SettingsUpgraded
+        {
+            get { return ((bool)(this["SettingsUpgraded"])); }
+            set { this["SettingsUpgraded"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("Print")]
+        public string LastPrintAction
+        {
+            get { return ((string)(this["LastPrintAction"])); }
+            set { this["LastPrintAction"] = value; }
+        }
     }
 }

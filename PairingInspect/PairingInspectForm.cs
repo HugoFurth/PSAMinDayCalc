@@ -442,9 +442,9 @@ namespace PairingInspect
                 bool isDeptTimeColumn = e.Column != null && e.Column.Name == "DeptTime";
                 bool isArrvTimeColumn = e.Column != null && e.Column.Name == "ArrvTime";
 
-                if ((isCreditColumn && (row.RowKind == "Duty" || row.RowKind == "Totals" || row.RowKind == "LayoverCredit" || row.RowKind == "COCredit")) ||
+                if ((isCreditColumn && (row.RowKind == "Duty" || row.RowKind == "Totals" || row.RowKind == "COCredit")) ||
                     (isDutySummaryColumn && row.RowKind == "Duty") ||
-                    (isArrvTimeColumn && (row.RowKind == "Totals" || row.RowKind == "LayoverCredit" || row.RowKind == "COCredit")) ||
+                    (isArrvTimeColumn && (row.RowKind == "Totals" || row.RowKind == "COCredit")) ||
                     (isDeptTimeColumn && row.RowKind == "Leg" && row.DeptTimeIsActual) ||
                     (isArrvTimeColumn && row.RowKind == "Leg" && row.ArrvTimeIsActual))
                     e.CellElement.Font = new Font(e.CellElement.Font, FontStyle.Bold);
@@ -899,7 +899,8 @@ namespace PairingInspect
             public string Deadhead { get; set; }
             public int Credit { get; set; }
             // Parenthesized amount shown before the total: the min-day top-up on
-            // Duty rows, or the trip rig included in the pairing total on the Totals row.
+            // Duty rows, or (layover bonus + trip rig) on the Totals row -- see Note
+            // for the itemized breakdown of which of those two made up this amount.
             public int CreditDeltaAmount { get; set; }
             public string CreditHHMM { get { return FormatHHMM(Credit); } }
 
@@ -1104,29 +1105,30 @@ namespace PairingInspect
                 }
 
             int tripRig = prg.PrgHdr.ActTripRig;
+
+            // UpdateDutyCreditsAndPay adds both the layover bonus and trip rig to the
+            // pairing-level credit accumulator only -- never to any individual duty's own
+            // stored row (explicit in the real code: the layover addition happens "AFTER
+            // DB has been updated so NOT going into DB"). So totalCredit (summed from the
+            // duty rows above) never includes either one, applied or not -- safe to always
+            // fold both into Totals here, no double-counting risk either way.
+            int layoverCredit = GetMinDayProcess().ComputeLayoverCreditForDisplay(prg, dutiesByPeriod);
+            int creditDelta = tripRig + layoverCredit;
+
+            var deltaNoteParts = new List<string>();
+            if (layoverCredit > 0)
+                deltaNoteParts.Add("(L/O: +" + FormatHHMMDelta(layoverCredit) + ")");
+            if (tripRig > 0)
+                deltaNoteParts.Add("(Rig: +" + FormatHHMMDelta(tripRig) + ")");
+
             rows.Add(new InspectRow
                 {
                 RowKind = "Totals",
                 ArrvTime = "Totals:",
-                Credit = totalCredit + tripRig,
-                CreditDeltaAmount = tripRig,
-                Note = tripRig > 0 ? "Trip Rig" : ""
+                Credit = totalCredit + creditDelta,
+                CreditDeltaAmount = creditDelta,
+                Note = string.Join(" ", deltaNoteParts)
                 });
-
-            // Both surfaced separately from the Totals row because the CO credit field has
-            // a known history of being wrong/stale (see mindaycalc-cocredit-block-invariant
-            // memory) -- showing the raw stored value next to the freshly-computed layover
-            // bonus lets the user spot a mismatch during analysis instead of trusting either
-            // silently. Only shown when applicable so a non-carry-over pairing's grid looks
-            // exactly as it did before this was added.
-            int layoverCredit = GetMinDayProcess().ComputeLayoverCreditForDisplay(prg, dutiesByPeriod);
-            if (layoverCredit > 0)
-                rows.Add(new InspectRow
-                    {
-                    RowKind = "LayoverCredit",
-                    ArrvTime = "Layover Credit:",
-                    Credit = layoverCredit
-                    });
 
             int coCredit = prg.PrgHdr.ActCreditCO;
             if (coCredit != 0)

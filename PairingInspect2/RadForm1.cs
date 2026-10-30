@@ -28,17 +28,37 @@ namespace PairingInspect2
         CTCrewOnPairing crewOnPairingLookup;
         List<CrewMemOnPairing> crewOnPairing;
         CTOTs openPositionsLookup;
+        CTEmployees employees;
         List<string> minDayCriticalMessages;
         RadGridView grid;
         RadGridView crewGrid;
         RadGridView exceptionsGrid;
         MinDayProcess minDayProcess;
         ContextMenuStrip ctwpmFunctionMenu;
+        ToolStripMenuItem itemModify;
+        ContextMenuStrip exceptionsPairingMenu;
+        PXExceptionRow exceptionsContextRow; // row the exceptions grid's PairingID right-click menu is currently acting on
         Dictionary<string, string> recentPairingLookup; // displayed "PairingID MM/DD" -> full stored "PairingID InternalDate" entry
         Timer securitySessionTimer;
 
         public RadForm1()
         {
+            // .NET scopes user settings (RecentPairings, LastPairingID, print preview
+            // size, grid layouts) to the assembly's own version number -- a version
+            // bump otherwise silently starts from a blank settings folder, with the
+            // real data just sitting orphaned under the previous version's folder.
+            // Confirmed live: bumping 1.0.0.0 -> 1.0.0.1 wiped Recent Pairings and
+            // LastPairingID this way. Upgrade() pulls forward from the most recent
+            // prior version once; the guard flag keeps it from re-running (and
+            // potentially clobbering changes made under the current version) on
+            // every subsequent launch of the same version.
+            if (!Properties.Settings.Default.SettingsUpgraded)
+                {
+                Properties.Settings.Default.Upgrade();
+                Properties.Settings.Default.SettingsUpgraded = true;
+                Properties.Settings.Default.Save();
+                }
+
             InitializeComponent();
             RadMessageBox.ThemeName = (new Telerik.WinControls.Themes.Office2010BlackTheme()).ThemeName;
             if (this.DesignMode)
@@ -46,9 +66,10 @@ namespace PairingInspect2
             new CTAirlineHeader().Fill(); // always read ah first.
             prg = new CTPairing();
             MinDayNameResolver.LoadDisplayNames(prg.Connection);
+            LoadCrewPosOrder();
 
             crewOnPairingLookup = new CTCrewOnPairing();
-            CTEmployees employees = new CTEmployees();
+            employees = new CTEmployees();
             employees.FillAll(); // includes inactive/terminated crew, not just currently-active -- a pairing can reference either
             crewOnPairingLookup.GetEmpName = employees.GetLastFirstname;
             openPositionsLookup = new CTOTs();
@@ -57,7 +78,9 @@ namespace PairingInspect2
             SetupCrewGrid();
             SetupGrid();
             SetupExceptionsGrid();
+            txtExceptionsFromDate.Leave += txtExceptionsFromDate_Leave;
             SetupLaunchCtwpmButton();
+            SetupPrintPairingButton();
             SetupSecuritySessionTimer();
 
             txtPairingID.Text = Properties.Settings.Default.LastPairingID;
@@ -107,6 +130,10 @@ namespace PairingInspect2
             StringCollection newRecent = new StringCollection();
             newRecent.AddRange(updated.ToArray());
             Properties.Settings.Default.RecentPairings = newRecent;
+            // Saved immediately rather than only on normal close -- an abnormal
+            // termination (crash, forced kill, power loss) would otherwise lose
+            // whatever recent-pairing updates happened since the last clean close.
+            Properties.Settings.Default.Save();
 
             RefreshRecentComboBox();
         }
@@ -143,7 +170,7 @@ namespace PairingInspect2
             itemInquire.Click += itemPrgInquire_Click;
             ctwpmFunctionMenu.Items.Add(itemInquire);
 
-            ToolStripMenuItem itemModify = new ToolStripMenuItem("Modify");
+            itemModify = new ToolStripMenuItem("Modify");
             itemModify.Click += itemPrgModify_Click;
             ctwpmFunctionMenu.Items.Add(itemModify);
 
@@ -154,6 +181,72 @@ namespace PairingInspect2
         {
             e.Cancel = true;
         }
+
+        // Unlike btnLaunchCTWPM (where both the body and the arrow do the same thing,
+        // so its native dropdown is cancelled in favor of a manually-shown
+        // ContextMenuStrip), this one genuinely needs the two areas to differ: the
+        // button body runs whichever of the 3 modes was used last (persisted via
+        // Settings.LastPrintAction), and the arrow offers the other two as
+        // alternatives. That's exactly what DropDownButtonElement.DropDownMenu is
+        // for, so it's left to its native behavior here instead of being suppressed.
+        private void SetupPrintPairingButton()
+        {
+            PrintMode saved;
+            if (!Enum.TryParse(Properties.Settings.Default.LastPrintAction, out saved))
+                saved = PrintMode.Print;
+            defaultPrintMode = saved;
+            btnPrintPairing.Text = PrintModeLabel(defaultPrintMode);
+
+            RebuildPrintDropdown();
+        }
+
+        private void RebuildPrintDropdown()
+        {
+            RadDropDownMenu menu = btnPrintPairing.DropDownButtonElement.DropDownMenu;
+            menu.Items.Clear();
+
+            foreach (PrintMode mode in new[] { PrintMode.Print, PrintMode.Preview, PrintMode.SaveAsPdf })
+            {
+                if (mode == defaultPrintMode)
+                    continue;
+
+                PrintMode captured = mode;
+                RadMenuItem item = new RadMenuItem(PrintModeLabel(mode));
+                item.Click += (s, e) => RunPrintMode(captured);
+                menu.Items.Add(item);
+            }
+        }
+
+        private void SetDefaultPrintMode(PrintMode mode)
+        {
+            if (mode == defaultPrintMode)
+                return;
+
+            defaultPrintMode = mode;
+            btnPrintPairing.Text = PrintModeLabel(mode);
+            Properties.Settings.Default.LastPrintAction = mode.ToString();
+            Properties.Settings.Default.Save();
+            RebuildPrintDropdown();
+        }
+
+        // Same File menu as PSAPBSX's own main form (Connection Info / About / Exit).
+        private void connectionInfoToolStripMenuItem_Click(object sender, EventArgs e)
+            {
+            frmConnectionInfo ci = new frmConnectionInfo();
+            ci.ConnectionString = prg.Connection.ConnectionString;
+            ci.ShowDialog();
+            }
+
+        private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
+            {
+            AboutBox1 ab = new AboutBox1();
+            ab.ShowDialog();
+            }
+
+        private void exitToolStripMenuItem_Click(object sender, EventArgs e)
+            {
+            Close();
+            }
 
         private void btnLaunchCTWPM_Click(object sender, EventArgs e)
         {
@@ -166,7 +259,12 @@ namespace PairingInspect2
             // run from CTWPM's pairing screen), so refresh once the user closes it --
             // Modify intentionally doesn't get this, since its own flow already expects
             // the user to come back and re-look-up manually.
-            LaunchCtwpm(CtwpmSelectionAutomator.FunctionInquire, refreshOnExit: true);
+            //
+            // A cancelled pairing won't be found under the selection dialog's default
+            // Active filter -- pre-select Inactive for it so Inquire actually finds the
+            // record instead of erroring.
+            bool selectInactive = prg.PrgHdr != null && prg.PrgHdr.Canceled;
+            LaunchCtwpm(CtwpmSelectionAutomator.FunctionInquire, refreshOnExit: true, selectInactive: selectInactive);
         }
 
         private void itemPrgModify_Click(object sender, EventArgs e)
@@ -174,19 +272,338 @@ namespace PairingInspect2
             LaunchCtwpm(CtwpmSelectionAutomator.FunctionModify);
         }
 
-        // Silent, no-interaction Evaluate -- launches CTWPM in Inquire mode, auto-clicks past the
-        // selection dialog, finds and clicks the pairing screen's "Eval&uate" button (moved
-        // off-screen first so the user never sees it), then closes the window automatically.
-        // Always refreshes on exit since the whole point is to change the pairing's evaluated state.
         private void btnEvaluatePairing_Click(object sender, EventArgs e)
         {
             if (prg.PrgHdr == null)
                 return;
+            EvaluatePairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+        }
+
+        private enum PrintMode { Print, Preview, SaveAsPdf }
+
+        private PrintMode defaultPrintMode = PrintMode.Print;
+
+        private static string PrintModeLabel(PrintMode mode)
+        {
+            switch (mode)
+            {
+                case PrintMode.Preview: return "Print Preview";
+                case PrintMode.SaveAsPdf: return "Save as PDF";
+                default: return "Print";
+            }
+        }
+
+        // Main button area: runs whichever mode is currently the default (see
+        // SetDefaultPrintMode). The dropdown arrow offers the other two.
+        private void btnPrintPairing_Click(object sender, EventArgs e)
+            {
+            RunPrintMode(defaultPrintMode);
+            }
+
+        private void RunPrintMode(PrintMode mode)
+            {
+            // Switch the button over as soon as the mode is picked, not after the
+            // task finishes -- Print/Preview's dialogs can sit open for a while.
+            SetDefaultPrintMode(mode);
+
+            switch (mode)
+                {
+                case PrintMode.Preview:
+                    DoPrintPreview();
+                    break;
+                case PrintMode.SaveAsPdf:
+                    DoSaveAsPdf();
+                    break;
+                default:
+                    DoPrint();
+                    break;
+                }
+            }
+
+        private void DoPrint()
+            {
+            PrintPairing(PrintMode.Print, null);
+            }
+
+        private void DoPrintPreview()
+            {
+            PrintPairing(PrintMode.Preview, null);
+            }
+
+        // RadPrintDocument.DocumentName is display-only in the print dialog -- it's
+        // not what "Microsoft Print to PDF"'s own save prompt uses for its suggested
+        // filename (confirmed: Telerik's own forum guidance is PrinterSettings.
+        // PrintFileName, which only takes effect with PrintToFile -- i.e. no dialog
+        // at all, it just writes straight to that path). Can't have both an
+        // interactive dialog AND a pre-filled PDF name, so this asks for the save
+        // location itself first (via a normal SaveFileDialog, pre-filled the way the
+        // Print dialog couldn't be), then prints straight to that path with no
+        // further prompt.
+        private void DoSaveAsPdf()
+            {
+            if (prg.PrgHdr == null)
+                return;
+
+            using (SaveFileDialog dlg = new SaveFileDialog())
+                {
+                dlg.Filter = "PDF Files (*.pdf)|*.pdf";
+                dlg.FileName = txtPairingID.Text + "_" + prg.PrgHdr.PrgDate + ".pdf";
+                if (dlg.ShowDialog() == DialogResult.OK)
+                    PrintPairing(PrintMode.SaveAsPdf, dlg.FileName);
+                }
+            }
+
+        // Prints the Inspect tab's grid via RadGridView's own built-in Print/PrintPreview --
+        // no export library needed, Telerik.WinControls.GridView.dll already has it.
+        // The header info (PrgID/date/crew type/status) lives in labels outside the
+        // grid, not in its rows -- rather than fake a grid row for it (which can't
+        // span columns), it goes into RadPrintDocument's own MiddleHeader, which
+        // prints across the full page width regardless of grid columns.
+        private void PrintPairing(PrintMode mode, string pdfPath)
+            {
+            if (prg.PrgHdr == null)
+                return;
+
+            List<InspectRow> realRows = grid.DataSource as List<InspectRow>;
+            if (realRows == null)
+                return;
+
+            // FitPageWidth scales every column down by the same uniform ratio to fit
+            // the page -- it doesn't treat MinWidth as a floor (confirmed: raising
+            // DutyTime's MinWidth from 80 to 110 made no difference), so a column
+            // that's already wide enough on screen can still end up too narrow once
+            // printed. Taking width fully out of Telerik's hands for print: set every
+            // column's own absolute print width explicitly (Duty Time generously
+            // oversized relative to the short columns), so FitPageWidth's uniform
+            // scale-down still leaves it legible. Saved/restored so the on-screen
+            // grid's own sizing is untouched.
+            var realColumnWidths = new Dictionary<string, int>();
+            var printColumnWidths = new Dictionary<string, int>
+                {
+                { "DutyPeriod", 40 }, { "Date", 55 }, { "OA", 35 }, { "FlightNum", 55 },
+                { "Deadhead", 40 }, { "DeptCity", 40 }, { "ArrvCity", 40 }, { "DeptTime", 50 },
+                { "ArrvTime", 50 }, { "Credit", 55 }, { "CreditHHMM", 70 }, { "Report", 50 },
+                { "Release", 50 }, { "DutyTime", 85 }, { "Note", 90 }
+                };
+            foreach (KeyValuePair<string, int> kv in printColumnWidths)
+                realColumnWidths[kv.Key] = grid.Columns[kv.Key].Width;
+
+            try
+                {
+                foreach (KeyValuePair<string, int> kv in printColumnWidths)
+                    grid.Columns[kv.Key].Width = kv.Value;
+
+
+                // Collapse consecutive divider rows (DividerAfterDuty immediately
+                // followed by the next duty's DividerBeforeDuty; the deliberate
+                // double DividerAfterTotals below Totals) down to one, for print
+                // only -- on-screen the grid's own ViewRowFormatting already shrinks
+                // each one to 4px, but doubling or tripling them up still means more
+                // visible line weight than intended once printed.
+                var printRows = new List<InspectRow>();
+                bool prevWasDivider = false;
+                foreach (InspectRow row in realRows)
+                    {
+                    bool isDivider = row.RowKind == "DividerBeforeDuty" || row.RowKind == "DividerAfterDuty" || row.RowKind == "DividerAfterTotals";
+                    if (isDivider && prevWasDivider)
+                        continue;
+                    printRows.Add(row);
+                    prevWasDivider = isDivider;
+                    }
+                grid.DataSource = printRows;
+
+                // ViewRowFormatting/PrintCellFormatting both fire too late in
+                // Telerik's print pipeline to shrink these rows for the printed
+                // output -- setting Height directly on the bound GridViewRowInfo
+                // objects right after rebinding, before Print/PrintPreview is even
+                // called, is what actually sticks.
+                foreach (Telerik.WinControls.UI.GridViewRowInfo rowInfo in grid.Rows)
+                    {
+                    InspectRow row = rowInfo.DataBoundItem as InspectRow;
+                    if (row != null && (row.RowKind == "DividerBeforeDuty" || row.RowKind == "DividerAfterDuty" || row.RowKind == "DividerAfterTotals"))
+                        {
+                        rowInfo.MinHeight = 4;
+                        rowInfo.MaxHeight = 4;
+                        rowInfo.Height = 4;
+                        }
+                    }
+
+                // Columns shrunk proportionally to fit the page width instead of
+                // spilling off the right edge.
+                grid.PrintStyle.FitWidthMode = Telerik.WinControls.UI.PrintFitWidthMode.FitPageWidth;
+
+                Telerik.WinControls.UI.RadPrintDocument printDoc = new Telerik.WinControls.UI.RadPrintDocument();
+                printDoc.Landscape = true;
+                printDoc.HeaderHeight = 40;
+                // What "Microsoft Print to PDF" (and most print drivers) pre-fills as
+                // the suggested filename/document name.
+                printDoc.DocumentName = txtPairingID.Text + "_" + prg.PrgHdr.PrgDate;
+                // Kept non-empty (not "") purely so Telerik still reserves
+                // HeaderHeight's space above the grid -- the actual visible text is
+                // drawn by DrawPairingPrintHeader below instead of this plain string,
+                // since MiddleHeader can't mix bold/regular within itself.
+                printDoc.MiddleHeader = " ";
+
+                var headerSegments = new List<Tuple<string, bool>>
+                    {
+                    Tuple.Create("", true), Tuple.Create(txtPairingID.Text, true),
+                    Tuple.Create("   ", false), Tuple.Create(txtPairingDate.Text, true)
+                    };
+                // CA/FO only, from the same crew list the Crew grid on this tab
+                // already fetches (crewOnPairing) -- a pairing missing one of these
+                // (e.g. not fully crewed yet) just omits that segment rather than
+                // printing a blank label.
+                foreach (CrewMemOnPairing c in crewOnPairing)
+                    {
+                    if (c.PairingPos != "CA" && c.PairingPos != "FO")
+                        continue;
+                    string assignCodeSuffix = (c.AssignCode == "RAS" || c.AssignCode == "TTA") ? " (" + c.AssignCode + ")" : "";
+                    headerSegments.Add(Tuple.Create("   " + c.PairingPos + ": ", false));
+                    headerSegments.Add(Tuple.Create(c.EmpNum + " " + c.LastFirstName + assignCodeSuffix, true));
+                    }
+                // Min Day status doesn't apply to a cancelled pairing -- drop the
+                // field entirely rather than show a marker that's leftover from
+                // before cancellation, and flag the cancellation itself instead.
+                if (prg.PrgHdr.Canceled)
+                    {
+                    headerSegments.Add(Tuple.Create("   (Canceled)", true));
+                    }
+                else
+                    {
+                    headerSegments.Add(Tuple.Create("   Min Day: ", false));
+                    headerSegments.Add(Tuple.Create(MinDayNameResolver.DisplayName(MinDayNameResolver.Resolve(prg.PrgHdr.UpdateidUpdempno)), true));
+                    }
+                if (mode == PrintMode.SaveAsPdf)
+                    {
+                    printDoc.PrinterSettings = new System.Drawing.Printing.PrinterSettings
+                        {
+                        PrinterName = "Microsoft Print to PDF",
+                        PrintToFile = true,
+                        PrintFileName = pdfPath
+                        };
+                    }
+
+                System.Drawing.Printing.PrintPageEventHandler headerHandler = (s2, pe) => DrawPairingPrintHeader(pe, printDoc, headerSegments);
+                printDoc.PrintPage += headerHandler;
+                try
+                    {
+                    switch (mode)
+                        {
+                        case PrintMode.Preview:
+                            ShowPrintPreview(printDoc);
+                            break;
+                        case PrintMode.SaveAsPdf:
+                            // Already fully configured above (printer, PrintToFile,
+                            // PrintFileName) -- showPrinterSettings=false so this
+                            // doesn't pop a dialog on top of that.
+                            grid.Print(false, printDoc);
+                            break;
+                        default:
+                            grid.Print(true, printDoc);
+                            break;
+                        }
+                    }
+                finally
+                    {
+                    printDoc.PrintPage -= headerHandler;
+                    }
+                }
+            finally
+                {
+                foreach (KeyValuePair<string, int> kv in realColumnWidths)
+                    grid.Columns[kv.Key].Width = kv.Value;
+                grid.DataSource = realRows;
+                }
+            }
+
+        // grid.PrintPreview(printDoc) opens its own dialog at a fixed default size
+        // with no way to configure it -- constructing RadPrintPreviewDialog directly
+        // instead gives control over the initial size (and lets the last-used size be
+        // remembered across sessions, the same way the pairing/exceptions grid
+        // layouts already are via PairingInspect2.Properties.Settings). Setting
+        // AssociatedObject on the document is what grid.PrintPreview() does
+        // internally to wire the grid's content into the dialog -- without it the
+        // dialog would just show a blank page.
+        private void ShowPrintPreview(Telerik.WinControls.UI.RadPrintDocument printDoc)
+            {
+            printDoc.AssociatedObject = grid;
+
+            using (Telerik.WinControls.UI.RadPrintPreviewDialog previewDialog = new Telerik.WinControls.UI.RadPrintPreviewDialog(printDoc))
+                {
+                int savedWidth = Properties.Settings.Default.PrintPreviewWidth;
+                int savedHeight = Properties.Settings.Default.PrintPreviewHeight;
+                Size desiredSize = (savedWidth > 0 && savedHeight > 0)
+                    ? new Size(savedWidth, savedHeight)
+                    : new Size(1100, 800); // generous default, well above the dialog's own small default
+                Rectangle workingArea = Screen.FromControl(this).WorkingArea;
+                previewDialog.Size = new Size(
+                    Math.Min(desiredSize.Width, workingArea.Width),
+                    Math.Min(desiredSize.Height, workingArea.Height));
+                previewDialog.StartPosition = FormStartPosition.CenterParent;
+
+                previewDialog.ShowDialog(this);
+
+                Properties.Settings.Default.PrintPreviewWidth = previewDialog.Size.Width;
+                Properties.Settings.Default.PrintPreviewHeight = previewDialog.Size.Height;
+                Properties.Settings.Default.Save();
+                }
+            }
+
+        // Draws the pairing summary into the header band RadPrintDocument.HeaderHeight
+        // reserves, each label in regular weight and each value in bold -- the plain
+        // LeftHeader/MiddleHeader/RightHeader strings share one HeaderFont and can't
+        // mix weights within themselves, so this draws it manually instead. Shrinks
+        // the font first if the full text would overflow the printable width, rather
+        // than letting it run off the page or get clipped.
+        private void DrawPairingPrintHeader(System.Drawing.Printing.PrintPageEventArgs pe, Telerik.WinControls.UI.RadPrintDocument printDoc, List<Tuple<string, bool>> segments)
+            {
+            const float startFontSize = 10f;
+            const float minFontSize = 6f;
+            float maxWidth = pe.MarginBounds.Width;
+
+            float fontSize = startFontSize;
+            float totalWidth;
+            while (true)
+                {
+                using (Font testRegular = new Font("Microsoft Sans Serif", fontSize, FontStyle.Regular))
+                using (Font testBold = new Font("Microsoft Sans Serif", fontSize, FontStyle.Bold))
+                    {
+                    totalWidth = 0;
+                    foreach (Tuple<string, bool> seg in segments)
+                        totalWidth += pe.Graphics.MeasureString(seg.Item1, seg.Item2 ? testBold : testRegular).Width;
+                    }
+                if (totalWidth <= maxWidth || fontSize <= minFontSize)
+                    break;
+                fontSize -= 0.5f;
+                }
+
+            using (Font regularFont = new Font("Microsoft Sans Serif", fontSize, FontStyle.Regular))
+            using (Font boldFont = new Font("Microsoft Sans Serif", fontSize, FontStyle.Bold))
+                {
+                float x = pe.MarginBounds.Left + Math.Max(0, (maxWidth - totalWidth) / 2);
+                float y = pe.MarginBounds.Top - printDoc.HeaderHeight + (printDoc.HeaderHeight - regularFont.Height) / 2f;
+                foreach (Tuple<string, bool> seg in segments)
+                    {
+                    Font f = seg.Item2 ? boldFont : regularFont;
+                    pe.Graphics.DrawString(seg.Item1, f, Brushes.Black, x, y);
+                    x += pe.Graphics.MeasureString(seg.Item1, f).Width;
+                    }
+                }
+            }
+
+        // Silent, no-interaction Evaluate -- launches CTWPM in Inquire mode, auto-clicks past the
+        // selection dialog, finds and clicks the pairing screen's "Eval&uate" button (moved
+        // off-screen first so the user never sees it), then closes the window automatically.
+        // Always refreshes on exit since the whole point is to change the pairing's evaluated
+        // state -- RefreshAfterCtwpmExit itself guards on prg.PrgHdr already matching this
+        // prgID/prgDate, so calling this for a pairing that isn't the one currently loaded in
+        // the Inspect tab (e.g. from the exceptions grid's menu) safely no-ops the refresh
+        // instead of clobbering whatever's actually displayed there.
+        private void EvaluatePairing(string prgID, string prgDate)
+        {
             try
             {
                 string ctExeDir = SFIConfig.AppSetting("CTEXEDIR");
-                string prgID = prg.PrgHdr.PrgID;
-                string prgDate = prg.PrgHdr.PrgDate;
                 Process ctwpmProcess = CtwpmSelectionAutomator.LaunchAndEvaluate(ctExeDir, prgID, prgDate);
                 ctwpmProcess.EnableRaisingEvents = true;
                 ctwpmProcess.Exited += (s, args) => RefreshAfterCtwpmExit(prgID, prgDate);
@@ -203,24 +620,24 @@ namespace PairingInspect2
             }
         }
 
-        private void LaunchCtwpm(string function, bool refreshOnExit = false)
+        private void LaunchCtwpm(string function, bool refreshOnExit = false, bool selectInactive = false)
         {
             if (prg.PrgHdr != null)
-                LaunchCtwpm(function, prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate, refreshOnExit);
+                LaunchCtwpm(function, prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate, refreshOnExit, selectInactive);
             else
-                LaunchCtwpm(function, null, null, refreshOnExit);
+                LaunchCtwpm(function, null, null, refreshOnExit, selectInactive);
         }
 
         // Used directly by the Min Day Exceptions grid's Modify button, which acts on
         // whichever pairing is in that row -- not necessarily the one loaded in prg.
-        private void LaunchCtwpm(string function, string prgID, string prgDate, bool refreshOnExit = false)
+        private void LaunchCtwpm(string function, string prgID, string prgDate, bool refreshOnExit = false, bool selectInactive = false)
         {
             try
             {
                 string ctExeDir = SFIConfig.AppSetting("CTEXEDIR");
                 if (prgID != null)
                 {
-                    Process ctwpmProcess = CtwpmSelectionAutomator.Launch(ctExeDir, function, prgID, prgDate);
+                    Process ctwpmProcess = CtwpmSelectionAutomator.Launch(ctExeDir, function, prgID, prgDate, selectInactive);
                     if (refreshOnExit)
                     {
                         ctwpmProcess.EnableRaisingEvents = true;
@@ -324,27 +741,96 @@ namespace PairingInspect2
             Properties.Settings.Default.Save();
         }
 
-        private static readonly Version MinRequiredMinDayProcessVersion = new Version(1, 0, 1, 29);
-
         // Created on first use rather than in the constructor -- setup (bid periods,
         // config/marker loading) is non-trivial and not every session ends up
         // recalculating a min day.
+        //
+        // No longer version-checks MinDayProcess.dll here (used to compare
+        // Assembly.GetAssembly(typeof(MinDayProcess)).GetName().Version against a hardcoded
+        // minimum) -- that guarded against a stale standalone MinDayProcess.dll left behind
+        // at a site that updated PairingInspect2.exe but not the DLL. The shipped deployment
+        // now merges MinDayProcess.dll directly into PrgInsp.exe (ILRepack, 0PairingInspect2Merge.bat
+        // -- required so CTPairing/PairingDuty are the same CLR type across the
+        // ComputeLayoverCreditForDisplay call, not two distinct merged copies), so
+        // typeof(MinDayProcess) now resolves to PrgInsp.exe's own assembly version (1.0.0.0,
+        // never bumped) instead of MinDayProcess's -- the check always failed after that
+        // change, and the scenario it guarded against (a stale separate file) can't happen
+        // anymore since there's no longer a separate file to go stale.
         private MinDayProcess GetMinDayProcess()
         {
             if (minDayProcess == null)
             {
-                Version actualVersion = Assembly.GetAssembly(typeof(MinDayProcess)).GetName().Version;
-                if (actualVersion < MinRequiredMinDayProcessVersion)
-                    throw new InvalidOperationException(
-                        "MinDayProcess.dll version " + actualVersion + " is older than the minimum required " +
-                        MinRequiredMinDayProcessVersion + ". Update MinDayProcess.dll before using Min Day features.");
-
+                CheckStandaloneMinDayProcessVersion();
                 minDayProcess = new MinDayProcess((int)CTSecurity.UserID());
                 minDayProcess.StatusUpdate += MinDayProcess_StatusUpdate;
                 minDayProcess.PairingProcess += MinDayProcess_PairingProcess;
             }
             return minDayProcess;
         }
+
+        // Written by 0PairingInspect2Merge.bat at merge time -- it records MinDayProcess.dll's
+        // version exactly as it stood right before ILRepack folded its types into this exe
+        // (that's the only moment the version is still readable; afterward the merged-in
+        // assembly's own manifest no longer exists). Not a hand-maintained constant, so it
+        // can't go stale from someone forgetting to bump it.
+        private const string MergedVersionFileName = "MinDayProcess.MergedVersion.txt";
+
+        // Sanity check for the free-standing MinDayProcess.dll that PSAMinDay.exe loads
+        // externally (this exe has its own copy merged in via ILRepack -- see note above
+        // GetMinDayProcess). A deploy that replaces only one of the two leaves PSAMinDay.exe
+        // and PrgInsp.exe silently running different MinDay logic. AssemblyName.GetAssemblyName
+        // just reads the file's manifest, so it won't load/clash with the merged-in copy.
+        private void CheckStandaloneMinDayProcessVersion()
+            {
+            try
+                {
+                string exeDir = Path.GetDirectoryName(Application.ExecutablePath);
+                string dllPath = Path.Combine(exeDir, "MinDayProcess.dll");
+                string mergedVersionPath = Path.Combine(exeDir, MergedVersionFileName);
+
+                // Missing sidecar file (e.g. an older deploy from before this check existed) --
+                // nothing to compare against, so skip rather than false-alarm.
+                if (!File.Exists(dllPath) || !File.Exists(mergedVersionPath))
+                    return;
+
+                Version actual = AssemblyName.GetAssemblyName(dllPath).Version;
+                Version expected = new Version(File.ReadAllText(mergedVersionPath).Trim());
+                if (actual != expected)
+                    {
+                    minDayVersionMismatch = true;
+                    btnRecalculateMinDay.Enabled = false;
+                    RadMessageBox.Show(
+                        "Standalone MinDayProcess.dll (" + actual + ") does not match the version merged into this PrgInsp.exe at pack time (" + expected + ")." +
+                        Environment.NewLine + "PSAMinDay.exe and PrgInsp.exe may be running different MinDay logic." +
+                        Environment.NewLine + "Recalculate Min Day has been disabled until this is redeployed.",
+                        "MinDayProcess version mismatch");
+                    }
+                }
+            catch (Exception ex)
+                {
+                RadMessageBox.Show("Could not check standalone MinDayProcess.dll version: " + ex.Message, "MinDayProcess version check failed");
+                }
+            }
+
+        // Set by CheckStandaloneMinDayProcessVersion -- true means btnRecalculateMinDay was
+        // disabled due to a detected version mismatch. ProcessCmdKey below is the only way
+        // to re-enable it without redeploying, for diagnosing the mismatch itself.
+        private bool minDayVersionMismatch = false;
+
+        // Deliberately not wired to any visible menu/button/tooltip -- a version mismatch
+        // means PSAMinDay.exe and PrgInsp.exe may be running different MinDay logic, so the
+        // button stays disabled for ordinary use. This fires the same recalc directly (not
+        // just re-enabling the button) so the disabled state is never left on for the rest
+        // of the session -- each use is a deliberate, one-off diagnostic action.
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+            {
+            if (minDayVersionMismatch && keyData == (Keys.Control | Keys.Alt | Keys.Shift | Keys.R))
+                {
+                btnRecalculateMinDay_Click(this, EventArgs.Empty);
+                return true;
+                }
+            return base.ProcessCmdKey(ref msg, keyData);
+            }
 
         private void MinDayProcess_StatusUpdate(object sender, MinDayStatusEventArgs args)
             {
@@ -451,7 +937,26 @@ namespace PairingInspect2
                 int result = prg.Assemble(txtPairingID.Text.Trim(), internalDate);
                 if (result == 0)
                 {
-                    RadMessageBox.Show("Pairing not found: " + txtPairingID.Text + " " + txtPairingDate.Text);
+                    // CTPairing.Assemble only ever sets PrgHdr inside GetPairingHeader,
+                    // which never runs on a failed lookup -- without this, PrgHdr (and
+                    // everything gated on it, like the Canceled-based button disabling)
+                    // would silently keep showing whatever pairing was loaded before.
+                    prg.PrgHdr = null;
+
+                    btnRecalculateMinDay.Enabled = false;
+                    btnEvaluatePairing.Enabled = false;
+                    // Inquire/Modify stay usable -- LaunchCtwpm already falls back to
+                    // CtwpmSelectionAutomator's no-args overload when PrgHdr is null,
+                    // opening CTWPM blank for the user to fill in themselves.
+                    itemModify.Enabled = true;
+
+                    crewGrid.DataSource = null;
+                    grid.DataSource = null;
+                    lblStatusValue.Text = "";
+                    lblCrewTypeValue.Text = "";
+                    lblMinDayStatusValue.Text = "";
+
+                    RadMessageBox.Show(this, "Pairing not found: " + txtPairingID.Text + " " + txtPairingDate.Text);
                     return;
                 }
 
@@ -486,6 +991,14 @@ namespace PairingInspect2
                 DisplayHeader(minDayMarkerStatus);
                 PopulateGrid(minDayMarkerStatus);
                 AddToRecentList(txtPairingID.Text.Trim(), internalDate);
+
+                // A cancelled pairing has nothing left to recalculate or evaluate --
+                // Recalculate also stays gated on minDayVersionMismatch from
+                // CheckStandaloneMinDayProcessVersion, which Evaluate (a native CTWPM
+                // action, unrelated to MinDayProcess.dll) doesn't need.
+                btnRecalculateMinDay.Enabled = !prg.PrgHdr.Canceled && !minDayVersionMismatch;
+                btnEvaluatePairing.Enabled = !prg.PrgHdr.Canceled;
+                itemModify.Enabled = !prg.PrgHdr.Canceled;
             }
             catch (Exception ex)
             {
@@ -499,7 +1012,9 @@ namespace PairingInspect2
 
             lblStatusValue.Text = hdr.Canceled ? "Canceled" : "Active";
             lblCrewTypeValue.Text = CrewTypeDisplay(hdr.CrewType);
-            lblMinDayStatusValue.Text = MinDayNameResolver.DisplayName(minDayMarkerStatus) + " (empno=" + hdr.UpdateidUpdempno + ")";
+            // Min Day status doesn't apply to a cancelled pairing -- whatever marker
+            // happens to be stored is leftover from before cancellation, not current.
+            lblMinDayStatusValue.Text = hdr.Canceled ? "-" : MinDayNameResolver.DisplayName(minDayMarkerStatus) + " (empno=" + hdr.UpdateidUpdempno + ")";
             // Red when the marker isn't one of ours -- MinDay has either never considered
             // this pairing, or a real touch since (a dispatcher edit, CrewPost syncing
             // actuals) cleared whatever MinDay marker it had. Totals' LO delta is already
@@ -775,14 +1290,29 @@ namespace PairingInspect2
             crewGrid.MasterTemplate.AllowDeleteRow = false;
             crewGrid.MasterTemplate.ShowRowHeaderColumn = false; // hides the pin/select/delete indicator column -- not appropriate for this read-only grid
             crewGrid.AllowColumnReorder = false;
+            crewGrid.ReadOnly = true; // editing a cell was eating the double-click meant to launch CTWMS
             crewGrid.Columns.Add(new GridViewTextBoxColumn("PairingPos", "PairingPos") { HeaderText = "Position", TextAlignment = ContentAlignment.MiddleCenter, Width = 74 });
             crewGrid.Columns.Add(new GridViewTextBoxColumn("EmpNum", "EmpNum") { HeaderText = "Emp #", TextAlignment = ContentAlignment.MiddleCenter, Width = 76 });
             crewGrid.Columns.Add(new GridViewTextBoxColumn("LastFirstName", "LastFirstName") { HeaderText = "Name", TextAlignment = ContentAlignment.MiddleCenter, Width = 130 });
             crewGrid.Columns.Add(new GridViewTextBoxColumn("AssignCode", "AssignCode") { HeaderText = "Assign Code", TextAlignment = ContentAlignment.MiddleCenter, Width = 91 });
             crewGrid.Columns.Add(new GridViewTextBoxColumn("PairingLineType", "PairingLineType") { HeaderText = "Line Type", TextAlignment = ContentAlignment.MiddleCenter, Width = 53 }); // 20px narrower than its resized width, leaving just enough room for the vertical scrollbar without triggering a horizontal one
+            crewGrid.CellDoubleClick += CrewGrid_CellDoubleClick;
 
             pnlCrewGrid.Controls.Add(crewGrid);
         }
+
+        // Same double-click-to-launch-CTWMS behavior as the exceptions grid's crew
+        // columns (ExceptionsGrid_CellClick) -- here every row is one crew member
+        // already (no Crew1/Crew2/Crew3 column ambiguity), and every row belongs to
+        // the one pairing currently loaded in the Inspect tab, so any column fires it.
+        private void CrewGrid_CellDoubleClick(object sender, GridViewCellEventArgs e)
+            {
+            CrewGridRow row = e.Row.DataBoundItem as CrewGridRow;
+            if (row == null || row.IsOpen || row.EmpNum == 0 || prg.PrgHdr == null)
+                return;
+
+            LaunchCtwms(row.EmpNum, prg.PrgHdr.PrgDate);
+            }
 
         // Display-only merge of assigned crew (CrewMemOnPairing, from MP) and open positions
         // (OTPM, from OT) into one shape crewGrid can bind to -- keeps both data-access types
@@ -823,7 +1353,7 @@ namespace PairingInspect2
             grid.Columns.Add(new GridViewTextBoxColumn("CreditHHMM", "CreditHHMMDisplay") { HeaderText = "Credit" + Environment.NewLine + "(HH:MM)", TextAlignment = ContentAlignment.MiddleRight });
             grid.Columns.Add(new GridViewTextBoxColumn("Report", "Report") { HeaderText = "Report", TextAlignment = ContentAlignment.MiddleCenter });
             grid.Columns.Add(new GridViewTextBoxColumn("Release", "Release") { HeaderText = "Release", TextAlignment = ContentAlignment.MiddleCenter });
-            grid.Columns.Add(new GridViewTextBoxColumn("DutyTime", "DutyTime") { HeaderText = "Duty Time", TextAlignment = ContentAlignment.MiddleCenter });
+            grid.Columns.Add(new GridViewTextBoxColumn("DutyTime", "DutyTime") { HeaderText = "Duty Time", TextAlignment = ContentAlignment.MiddleCenter, MinWidth = 110 });
             grid.Columns.Add(new GridViewTextBoxColumn("Note", "Note") { HeaderText = "Note", TextAlignment = ContentAlignment.MiddleCenter });
 
             // ColumnGroupsViewDefinition only shows columns explicitly listed in it --
@@ -852,6 +1382,7 @@ namespace PairingInspect2
             grid.TableElement.TableHeaderHeight = 40;
             grid.ViewCellFormatting += grid_ViewCellFormatting;
             grid.ViewRowFormatting += grid_ViewRowFormatting;
+            grid.PrintCellFormatting += grid_PrintCellFormatting;
 
             // A layout saved before a column was added/renamed/reordered will silently
             // override the current setup (header text, order, visibility) when loaded --
@@ -881,21 +1412,47 @@ namespace PairingInspect2
             exceptionsGrid.ShowGroupPanel = false;
             exceptionsGrid.MasterTemplate.AutoGenerateColumns = false;
             exceptionsGrid.MasterTemplate.AllowAddNewRow = false;
+            exceptionsGrid.ReadOnly = true; // editing a cell was eating the click meant to launch Modify
             exceptionsGrid.MasterTemplate.ShowRowHeaderColumn = false; // hides the pin/select/delete indicator column -- not appropriate for this read-only grid
-            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("PairingID", "PairingID") { HeaderText = "Pairing", TextAlignment = ContentAlignment.MiddleCenter });
-            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("PairingDate", "PairingDate") { HeaderText = "Pairing Date", TextAlignment = ContentAlignment.MiddleCenter });
-            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("EndDate", "EndDate") { HeaderText = "End Date", TextAlignment = ContentAlignment.MiddleCenter });
-            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("RaisedDate", "RaisedDate") { HeaderText = "Raised Date", TextAlignment = ContentAlignment.MiddleCenter });
-            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("RaisedTime", "RaisedTime") { HeaderText = "Raised Time", TextAlignment = ContentAlignment.MiddleCenter });
-            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("UpdatedBy", "UpdatedBy") { HeaderText = "Updated By", TextAlignment = ContentAlignment.MiddleCenter });
+            // Explicit starting Width on every column -- without one, RadGridView
+            // auto-computes width from content/header and stretches whichever column
+            // ends up last to absorb any leftover space so there's no gap at the grid's
+            // right edge, and that auto-stretch recalculates on every layout pass,
+            // overriding any manual drag-resize on that column.
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("PairingID", "PairingID") { HeaderText = "Pairing", TextAlignment = ContentAlignment.MiddleCenter, Width = 90 });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("PairingDate", "PairingDate") { HeaderText = "Pairing Date", TextAlignment = ContentAlignment.MiddleCenter, Width = 100 });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("EndDate", "EndDate") { HeaderText = "End Date", TextAlignment = ContentAlignment.MiddleCenter, Width = 100 });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("Crew1", "Crew1") { HeaderText = "", TextAlignment = ContentAlignment.MiddleLeft, Width = 150 });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("Crew2", "Crew2") { HeaderText = "", TextAlignment = ContentAlignment.MiddleLeft, Width = 150 });
+            exceptionsGrid.Columns.Add(new GridViewTextBoxColumn("Crew3", "Crew3") { HeaderText = "", TextAlignment = ContentAlignment.MiddleLeft, Width = 150 });
+            exceptionsGrid.CellDoubleClick += ExceptionsGrid_CellClick;
+            exceptionsGrid.ViewCellFormatting += ExceptionsGrid_ViewCellFormatting;
 
-            GridViewCommandColumn modifyColumn = new GridViewCommandColumn("Modify");
-            modifyColumn.HeaderText = "";
-            modifyColumn.UseDefaultText = true;
-            modifyColumn.DefaultText = "Modify";
-            modifyColumn.TextAlignment = ContentAlignment.MiddleCenter;
-            exceptionsGrid.Columns.Add(modifyColumn);
-            exceptionsGrid.CommandCellClick += ExceptionsGrid_CommandCellClick;
+            SetupExceptionsPairingMenu();
+            exceptionsGrid.MouseUp += ExceptionsGrid_MouseUp;
+
+            // ColumnGroupsViewDefinition only shows columns explicitly listed in it --
+            // every column needs a home, including ones that aren't part of any visible
+            // group heading (same pattern as the main grid's "leadingColumns" group).
+            // Crew1-3 go under one "Crew" header spanning both header rows; the 2nd row
+            // is blank since the 3 slots aren't individually labeled.
+            ColumnGroupsViewDefinition columnGroupsView = new ColumnGroupsViewDefinition();
+
+            GridViewColumnGroup leadingColumns = new GridViewColumnGroup("");
+            leadingColumns.ShowHeader = false;
+            leadingColumns.Rows.Add(new GridViewColumnGroupRow());
+            foreach (string name in new string[] { "PairingID", "PairingDate", "EndDate" })
+                leadingColumns.Rows[0].ColumnNames.Add(name);
+            columnGroupsView.ColumnGroups.Add(leadingColumns);
+
+            GridViewColumnGroup crewGroup = new GridViewColumnGroup("Crew");
+            crewGroup.Rows.Add(new GridViewColumnGroupRow());
+            crewGroup.Rows[0].ColumnNames.Add("Crew1");
+            crewGroup.Rows[0].ColumnNames.Add("Crew2");
+            crewGroup.Rows[0].ColumnNames.Add("Crew3");
+            columnGroupsView.ColumnGroups.Add(crewGroup);
+
+            exceptionsGrid.ViewDefinition = columnGroupsView;
 
             string currentFingerprint = ExceptionsGridColumnFingerprint();
             if (!string.IsNullOrEmpty(Properties.Settings.Default.ExceptionsGridLayout) &&
@@ -917,21 +1474,129 @@ namespace PairingInspect2
             // this format, not the MM/DD/YY the grid displays.
             public string PairingDateRaw { get; set; }
             public string EndDate { get; set; }
-            public string RaisedDate { get; set; }
-            public string RaisedTime { get; set; }
-            public uint UpdatedBy { get; set; }
+            public string Crew1 { get; set; }
+            public string Crew2 { get; set; }
+            public string Crew3 { get; set; }
+            // Raw empno behind each Crew slot -- kept separate from the formatted
+            // "empno pos name" display string so double-clicking a crew cell doesn't
+            // need to parse it back out. 0 when that slot has no crew member.
+            public uint CrewEmpNum1 { get; set; }
+            public uint CrewEmpNum2 { get; set; }
+            public uint CrewEmpNum3 { get; set; }
+            // Drives the RAS/TTA dark-red highlight in ExceptionsGrid_ViewCellFormatting --
+            // kept separate from the displayed "empno pos name" string for the same reason
+            // as CrewEmpNumN above.
+            public string CrewAssignCode1 { get; set; }
+            public string CrewAssignCode2 { get; set; }
+            public string CrewAssignCode3 { get; set; }
         }
 
-        // RaisedTime is stored as literal HHMM (e.g. 2214 -> 22:14, via
-        // CTTimeFormat.AsRaisedTime), unlike Report_Time/duty times elsewhere in this
-        // app which are minutes-since-midnight -- needs its own formatter, not FormatHHMM.
-        private static string FormatRaisedTime(int hhmm)
+        // Hardcoded fallback matches AH.Posmask_0..3's live order (CA, FO, FA, CF) --
+        // only used if the AH read in LoadCrewPosOrder fails, so the grid's crew
+        // ordering degrades gracefully rather than throwing.
+        private static readonly string[] DefaultCrewPosOrder = { "CA", "FO", "FA", "CF" };
+        private string[] crewPosOrder = DefaultCrewPosOrder;
+
+        // AH is a single-row airline-config table; Posmask_0..3 give the crew position
+        // display order (CA, FO, FA, CF). CTAirlineHeader's own Fill() doesn't select
+        // these columns (only Code/Name -- see FillByNameAndCode's command text), so
+        // read them directly here rather than changing that shared CTDataAccess class.
+        // Called once from the constructor.
+        private void LoadCrewPosOrder()
+            {
+            try
+                {
+                using (OleDbCommand cmd = prg.Connection.CreateCommand())
+                    {
+                    cmd.CommandText = "SELECT Posmask_0, Posmask_1, Posmask_2, Posmask_3 FROM AH";
+                    using (OleDbDataReader reader = cmd.ExecuteReader())
+                        {
+                        if (reader.Read())
+                            crewPosOrder = new[]
+                                {
+                                reader["Posmask_0"].ToString().Trim(),
+                                reader["Posmask_1"].ToString().Trim(),
+                                reader["Posmask_2"].ToString().Trim(),
+                                reader["Posmask_3"].ToString().Trim()
+                                };
+                        }
+                    }
+                }
+            catch (Exception)
+                {
+                crewPosOrder = DefaultCrewPosOrder;
+                }
+            }
+
+        // Only 3 crew columns fit the exceptions grid, so take the first 3 in
+        // crewPosOrder (CA, FO, FA, CF -- read from AH.Posmask_0..3, see
+        // LoadCrewPosOrder) and fold anything past the 3rd into a "+N more" suffix on
+        // the 3rd slot rather than silently dropping it -- the double-click-to-Modify
+        // action still shows the real full crew list for a trip that needs closer
+        // inspection. A position not found in crewPosOrder sorts last, after the known
+        // positions, rather than erroring. crewOnPairingLookup.List is cleared and
+        // refilled in place on every call (same object reference, not reallocated --
+        // see the comment on its other caller above), so it must be read out into
+        // row.CrewN immediately after this Fill call and before the next row's Fill
+        // call overwrites it. Also must run after the PX reader above is fully
+        // closed -- this shares prg.Connection's single OleDb connection
+        // (GlobalCTDataSet.Instance.Connection), and that connection crashes the
+        // native provider if a second reader is opened on it while one is still
+        // active.
+        private static string FormatCrewSlot(CrewMemOnPairing c)
         {
-            return string.Format("{0:D2}:{1:D2}", hhmm / 100, hhmm % 100);
+            return c.EmpNum + " " + c.PairingPos.Trim() + " " + c.LastFirstName;
+        }
+
+        private void PopulateCrewColumns(PXExceptionRow row)
+        {
+            crewOnPairingLookup.FillActiveCrewOnPairing(row.PairingID, row.PairingDateRaw);
+            List<CrewMemOnPairing> crew = crewOnPairingLookup.List
+                .OrderBy(c =>
+                    {
+                    int idx = Array.IndexOf(crewPosOrder, c.PairingPos.Trim());
+                    return idx < 0 ? int.MaxValue : idx;
+                    })
+                .ToList();
+
+            // Slot 3 never shows an actual crew member -- at 3 or more assigned,
+            // it becomes a "+N more" summary instead (N = however many beyond the
+            // first 2 shown), so it never carries a real empno/assign code for
+            // click-to-launch purposes.
+            row.Crew1 = crew.Count > 0 ? FormatCrewSlot(crew[0]) : "";
+            row.Crew2 = crew.Count > 1 ? FormatCrewSlot(crew[1]) : "";
+            row.Crew3 = crew.Count > 2 ? "+" + (crew.Count - 2) + " more" : "";
+
+            row.CrewEmpNum1 = crew.Count > 0 ? crew[0].EmpNum : 0;
+            row.CrewEmpNum2 = crew.Count > 1 ? crew[1].EmpNum : 0;
+            row.CrewEmpNum3 = 0;
+
+            row.CrewAssignCode1 = crew.Count > 0 ? crew[0].AssignCode : null;
+            row.CrewAssignCode2 = crew.Count > 1 ? crew[1].AssignCode : null;
+            row.CrewAssignCode3 = null;
+        }
+
+        // Keeps the range sane any time it might have gone bad -- a From past the
+        // current To silently returned zero rows otherwise, with nothing pointing
+        // at why. Called both when the user tabs/clicks away from From and right
+        // before Find actually runs (e.g. clicking Find without ever leaving the
+        // From field, or after it was changed programmatically).
+        private void FixupExceptionsDateRange()
+        {
+            if (txtExceptionsFromDate.NullableValue.HasValue && txtExceptionsToDate.NullableValue.HasValue &&
+                txtExceptionsFromDate.NullableValue.Value > txtExceptionsToDate.NullableValue.Value)
+                txtExceptionsToDate.NullableValue = txtExceptionsFromDate.NullableValue;
+        }
+
+        private void txtExceptionsFromDate_Leave(object sender, EventArgs e)
+        {
+            FixupExceptionsDateRange();
         }
 
         private void btnFindExceptions_Click(object sender, EventArgs e)
         {
+            FixupExceptionsDateRange();
+
             btnFindExceptions.Enabled = false;
             btnFindExceptions.Refresh(); // read below is synchronous, so force the disabled state to paint before it blocks the UI thread
             try
@@ -942,9 +1607,24 @@ namespace PairingInspect2
                 List<PXExceptionRow> rows = new List<PXExceptionRow>();
                 using (OleDbCommand cmd = prg.Connection.CreateCommand())
                 {
-                    cmd.CommandText = "SELECT Prgid_Prgno_Base+Prgid_Prgno_Eqpt+Prgid_Prgno_3+Prgid_Prgno_4_6 as PrgNo, " +
-                        "Prgid_Prgdate, Enddate, RaisedDate, RaisedTime, Updateid_Updempno " +
-                        "FROM PX WHERE ErrorNo_0 = ? AND Prgid_Prgdate >= ? AND Prgid_Prgdate <= ?";
+                    // PX has no Cancel field of its own -- a pairing's PX exception row
+                    // survives cancellation (CTPairing cancel doesn't clean up PX), so this
+                    // joins to PM to filter those out by the pairing's own Cancel flag.
+                    cmd.CommandText = "SELECT px.Prgid_Prgno_Base+px.Prgid_Prgno_Eqpt+px.Prgid_Prgno_3+px.Prgid_Prgno_4_6 as PrgNo, " +
+                        "px.Prgid_Prgdate, px.Enddate " +
+                        "FROM PX " +
+                        "INNER JOIN PM ON " +
+                        "pm.Prgid_Prgno_Base = px.Prgid_Prgno_Base AND " +
+                        "pm.Prgid_Prgno_Eqpt = px.Prgid_Prgno_Eqpt AND " +
+                        "pm.Prgid_Prgno_3 = px.Prgid_Prgno_3 AND " +
+                        "pm.Prgid_Prgno_4_6 = px.Prgid_Prgno_4_6 AND " +
+                        "pm.Prgid_Prgdate = px.Prgid_Prgdate " +
+                        // SeverityInd = 'H' means the native engine marked this PX row History
+                        // (superseded by a later version of the same pairing, e.g. on a
+                        // Build/Modify commit -- see Z:\Hugo\CT Source\Lib\Pairing\CT2290.cpp's
+                        // db_updates_2710-style logic). Never deleted, just flagged -- exclude
+                        // it here the same way Cancel <> 'C' excludes cancelled pairings.
+                        "WHERE px.ErrorNo_0 = ? AND px.Prgid_Prgdate >= ? AND px.Prgid_Prgdate <= ? AND pm.Cancel <> 'C' AND px.SeverityInd <> 'H'";
                     cmd.Parameters.AddWithValue("errorNo", 6500);
                     cmd.Parameters.AddWithValue("fromDate", fromDate);
                     cmd.Parameters.AddWithValue("toDate", toDate);
@@ -958,14 +1638,14 @@ namespace PairingInspect2
                                 PairingID = reader["PrgNo"].ToString().Trim(),
                                 PairingDate = PairingDateToDisplay(rawPairingDate),
                                 PairingDateRaw = rawPairingDate,
-                                EndDate = PairingDateToDisplay(reader["Enddate"].ToString()),
-                                RaisedDate = PairingDateToDisplay(reader["RaisedDate"].ToString()),
-                                RaisedTime = FormatRaisedTime(Convert.ToInt32(reader["RaisedTime"])),
-                                UpdatedBy = Convert.ToUInt32(reader["Updateid_Updempno"])
+                                EndDate = PairingDateToDisplay(reader["Enddate"].ToString())
                             });
                         }
                     }
                 }
+
+                foreach (PXExceptionRow row in rows)
+                    PopulateCrewColumns(row);
 
                 exceptionsGrid.DataSource = rows;
             }
@@ -979,17 +1659,139 @@ namespace PairingInspect2
             }
         }
 
-        private void ExceptionsGrid_CommandCellClick(object sender, GridViewCellEventArgs e)
+        private void SetupExceptionsPairingMenu()
         {
-            if (e.Column.Name != "Modify")
+            exceptionsPairingMenu = new ContextMenuStrip();
+
+            ToolStripMenuItem itemInspect = new ToolStripMenuItem("Inspect");
+            itemInspect.Click += itemExceptionsPairingInspect_Click;
+            exceptionsPairingMenu.Items.Add(itemInspect);
+
+            ToolStripMenuItem itemEvaluate = new ToolStripMenuItem("Evaluate");
+            itemEvaluate.Click += itemExceptionsPairingEvaluate_Click;
+            exceptionsPairingMenu.Items.Add(itemEvaluate);
+
+            ToolStripMenuItem itemInquire = new ToolStripMenuItem("Inquire");
+            itemInquire.Click += itemExceptionsPairingInquire_Click;
+            exceptionsPairingMenu.Items.Add(itemInquire);
+
+            ToolStripMenuItem itemModify = new ToolStripMenuItem("Modify");
+            itemModify.Click += itemExceptionsPairingModify_Click;
+            exceptionsPairingMenu.Items.Add(itemModify);
+        }
+
+        // Right-click on the PairingID column only -- GetElementAtPoint<GridDataCellElement>
+        // is the documented way to hit-test a RadGridView cell at a screen point (RadElementTree,
+        // not a dedicated RadGridView event -- CellClick/CellDoubleClick don't carry mouse-button
+        // info, and there's no plain "right-click a cell" event on RadGridView itself).
+        private void ExceptionsGrid_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right)
                 return;
+
+            GridDataCellElement cell = exceptionsGrid.ElementTree.GetElementAtPoint<GridDataCellElement>(e.Location);
+            if (cell == null || cell.ColumnInfo == null || cell.ColumnInfo.Name != "PairingID")
+                return;
+
+            exceptionsContextRow = cell.RowInfo.DataBoundItem as PXExceptionRow;
+            if (exceptionsContextRow == null)
+                return;
+
+            exceptionsPairingMenu.Show(exceptionsGrid, e.Location);
+        }
+
+        private void itemExceptionsPairingInspect_Click(object sender, EventArgs e)
+        {
+            if (exceptionsContextRow == null)
+                return;
+            OpenInPairingInspect(exceptionsContextRow.PairingID, exceptionsContextRow.PairingDateRaw);
+        }
+
+        // "Load it in the other screen and flip to that tab" -- fills the Inspect tab's own
+        // pairing ID/date fields and runs its normal lookup, same as if the user had typed
+        // them in and clicked Look Up themselves. Shared by the PairingID right-click menu's
+        // "Pairing Inspect" item and a plain double-click on the PairingID cell.
+        private void OpenInPairingInspect(string prgID, string prgDateRaw)
+        {
+            txtPairingID.Text = prgID;
+            txtPairingDate.NullableValue = InternalDateToNullable(prgDateRaw);
+            tabMain.SelectedPage = tabPageInspect;
+            btnLookUp_Click(this, EventArgs.Empty);
+        }
+
+        private void itemExceptionsPairingEvaluate_Click(object sender, EventArgs e)
+        {
+            if (exceptionsContextRow == null)
+                return;
+            EvaluatePairing(exceptionsContextRow.PairingID, exceptionsContextRow.PairingDateRaw);
+        }
+
+        private void itemExceptionsPairingInquire_Click(object sender, EventArgs e)
+        {
+            if (exceptionsContextRow == null)
+                return;
+            LaunchCtwpm(CtwpmSelectionAutomator.FunctionInquire, exceptionsContextRow.PairingID, exceptionsContextRow.PairingDateRaw);
+        }
+
+        private void itemExceptionsPairingModify_Click(object sender, EventArgs e)
+        {
+            if (exceptionsContextRow == null)
+                return;
+            LaunchCtwpm(CtwpmSelectionAutomator.FunctionModify, exceptionsContextRow.PairingID, exceptionsContextRow.PairingDateRaw);
+        }
+
+        private void ExceptionsGrid_ViewCellFormatting(object sender, CellFormattingEventArgs e)
+        {
+            PXExceptionRow row = e.Row != null ? e.Row.DataBoundItem as PXExceptionRow : null;
+            if (row == null || e.Column == null)
+                return;
+
+            string assignCode = null;
+            if (e.Column.Name == "Crew1") assignCode = row.CrewAssignCode1;
+            else if (e.Column.Name == "Crew2") assignCode = row.CrewAssignCode2;
+            else if (e.Column.Name == "Crew3") assignCode = row.CrewAssignCode3;
+            else
+                return;
+
+            bool isRasOrTta = assignCode == "RAS" || assignCode == "TTA";
+            e.CellElement.ForeColor = isRasOrTta ? Color.DarkRed : SystemColors.ControlText;
+        }
+
+        private void ExceptionsGrid_CellClick(object sender, GridViewCellEventArgs e)
+        {
             PXExceptionRow row = e.Row.DataBoundItem as PXExceptionRow;
             if (row == null)
                 return;
-            LaunchCtwpm(CtwpmSelectionAutomator.FunctionModify, row.PairingID, row.PairingDateRaw);
+
+            if (e.Column.Name == "PairingID")
+                {
+                OpenInPairingInspect(row.PairingID, row.PairingDateRaw);
+                return;
+                }
+
+            uint empNum = 0;
+            if (e.Column.Name == "Crew1") empNum = row.CrewEmpNum1;
+            else if (e.Column.Name == "Crew2") empNum = row.CrewEmpNum2;
+            else if (e.Column.Name == "Crew3") empNum = row.CrewEmpNum3;
+
+            if (empNum != 0)
+                LaunchCtwms(empNum, row.PairingDateRaw);
         }
 
-        private const string ExceptionsGridSchemaVersion = "v1";
+        private void LaunchCtwms(uint empNum, string internalDate)
+        {
+            try
+            {
+                string ctExeDir = SFIConfig.AppSetting("CTEXEDIR");
+                CtwmsSelectionAutomator.Launch(ctExeDir, empNum, internalDate);
+            }
+            catch (Exception ex)
+            {
+                RadMessageBox.Show("Failed to launch CTWMS: " + ex.Message);
+            }
+        }
+
+        private const string ExceptionsGridSchemaVersion = "v2"; // v2: switched to ColumnGroupsViewDefinition (grouped Crew header)
 
         private string ExceptionsGridColumnFingerprint()
         {
@@ -1070,6 +1872,27 @@ namespace PairingInspect2
             }
         }
 
+        // Telerik's print renderer is a separate pipeline from the on-screen grid --
+        // it never raises ViewRowFormatting, so the 4px-tall divider rows above
+        // rendered at full default row height when printed instead, showing up as
+        // doubled/tripled solid lines (most visible after Totals, which deliberately
+        // stacks two DividerAfterTotals rows for a heavier closing bar on screen).
+        // PrintCellFormatting is the print-pipeline's own per-cell equivalent; it
+        // still exposes a settable Row.Height, so the same collapse applies here.
+        private void grid_PrintCellFormatting(object sender, Telerik.WinControls.UI.PrintCellFormattingEventArgs e)
+        {
+            if (e.Row.DataBoundItem is InspectRow)
+            {
+                InspectRow row = (InspectRow)e.Row.DataBoundItem;
+                if (row.RowKind == "DividerBeforeDuty" || row.RowKind == "DividerAfterDuty" || row.RowKind == "DividerAfterTotals")
+                {
+                    e.Row.MinHeight = 4;
+                    e.Row.MaxHeight = 4;
+                    e.Row.Height = 4;
+                }
+            }
+        }
+
         // Bump this whenever a structural change isn't captured by the per-column
         // fingerprint below -- e.g. switching ViewDefinition (plain columns vs.
         // grouped-column headers), which the saved layout also can't distinguish
@@ -1125,10 +1948,22 @@ namespace PairingInspect2
             // single-prefix display always applies.
             public List<KeyValuePair<string, int>> CreditDeltaBreakdown { get; set; }
 
+            // True for the thin spacer rows between/around duties -- these never
+            // carry a real Credit value (it's just left at its int default, 0), so
+            // CreditDisplay/CreditHHMMDisplay must not fall through to printing that
+            // 0/00:00 -- confirmed live: that's exactly what was showing up as faint
+            // extra lines under each duty's real credit when printed.
+            private bool IsDividerRow
+            {
+                get { return RowKind == "DividerBeforeDuty" || RowKind == "DividerAfterDuty" || RowKind == "DividerAfterTotals"; }
+            }
+
             public string CreditDisplay
             {
                 get
                 {
+                    if (IsDividerRow)
+                        return "";
                     if (CreditDeltaBreakdown != null && CreditDeltaBreakdown.Count > 1)
                         return string.Join("", CreditDeltaBreakdown.Select(kv => "(+" + kv.Value + " " + kv.Key + ")")) + " " + Credit;
                     if (CreditDeltaAmount > 0)
@@ -1141,6 +1976,8 @@ namespace PairingInspect2
             {
                 get
                 {
+                    if (IsDividerRow)
+                        return "";
                     if (CreditDeltaBreakdown != null && CreditDeltaBreakdown.Count > 1)
                         return string.Join("", CreditDeltaBreakdown.Select(kv => "(+" + FormatHHMMDelta(kv.Value) + " " + kv.Key + ")")) + " " + CreditHHMM;
                     if (CreditDeltaAmount > 0)

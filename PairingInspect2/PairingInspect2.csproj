@@ -13,6 +13,7 @@
     <AssemblyName>PrgInsp</AssemblyName>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
+    <ApplicationIcon>ZDS Logo Only.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>x86</PlatformTarget>
@@ -88,6 +89,25 @@
     <Compile Include="MinDayNameResolver.cs" />
     <Compile Include="MinDayDiffCalculator.cs" />
     <Compile Include="CtwpmSelectionAutomator.cs" />
+    <Compile Include="CtwmsSelectionAutomator.cs" />
+    <Compile Include="AboutBox1.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="AboutBox1.Designer.cs">
+      <DependentUpon>AboutBox1.cs</DependentUpon>
+    </Compile>
+    <EmbeddedResource Include="AboutBox1.resx">
+      <DependentUpon>AboutBox1.cs</DependentUpon>
+    </EmbeddedResource>
+    <Compile Include="frmConnectionInfo.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="frmConnectionInfo.Designer.cs">
+      <DependentUpon>frmConnectionInfo.cs</DependentUpon>
+    </Compile>
+    <EmbeddedResource Include="frmConnectionInfo.resx">
+      <DependentUpon>frmConnectionInfo.cs</DependentUpon>
+    </EmbeddedResource>
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
@@ -98,6 +118,8 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
+    <Content Include="ZDS Logo Only.ico" />
+    <None Include="Resources\Zephyr Data Systems.jpeg" />
     <None Include="app.manifest" />
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>

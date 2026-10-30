@@ -20,10 +20,20 @@ namespace PairingInspect2
         public const string FunctionInquire = "INQUIRE";
         public const string FunctionModify = "MODIFY";
 
-        public static Process Launch(string ctExeDir, string function, string prgId, string prgDate)
+        // selectInactive: the selection dialog's "Pairing Information" group box has an
+        // Active/Inactive radio pair (TRadioButton controls, two levels deep under the
+        // dialog -- a TGroupBox child, not a direct child of the dialog itself) that
+        // defaults to Active. A cancelled pairing won't be found under Active, so
+        // Inquire on one needs Inactive selected first -- confirmed live via a
+        // control-tree dump of this exact dialog (H7Q19A/20260831, a real cancelled
+        // pairing) rather than source, since Z:\Hugo\CT Source wasn't reachable this
+        // session.
+        public static Process Launch(string ctExeDir, string function, string prgId, string prgDate, bool selectInactive = false)
             {
             Process ctwpmProcess = Process.Start(Path.Combine(ctExeDir, CtwpmExeName),
                 function + " " + prgId + " " + prgDate);
+            if (selectInactive)
+                ClickInactiveRadioButton(ctwpmProcess.Id);
             ClickOkButton(ctwpmProcess.Id);
             return ctwpmProcess;
             }
@@ -159,6 +169,51 @@ namespace PairingInspect2
 
             if (hBtn != IntPtr.Zero)
                 PostMessage(hBtn, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+            }
+
+        // Same retry/re-resolve pattern as ClickOkButton (the selection form gets
+        // destroyed and recreated shortly after first appearing), but searches the
+        // whole descendant tree -- the Inactive radio button isn't a direct child of
+        // the dialog, it's nested inside a "Pairing Information" TGroupBox.
+        private static void ClickInactiveRadioButton(int ctwpmProcessId)
+            {
+            uint pid = (uint)ctwpmProcessId;
+            IntPtr hBtn = IntPtr.Zero;
+            for (int i = 0; i < 200 && hBtn == IntPtr.Zero; i++)
+                {
+                IntPtr hWnd = FindSelectionWindow(pid);
+                if (hWnd != IntPtr.Zero)
+                    hBtn = FindDescendantByClassAndText(hWnd, "TRadioButton", "Inactive");
+
+                if (hBtn == IntPtr.Zero)
+                    {
+                    Thread.Sleep(50);
+                    Application.DoEvents();
+                    }
+                }
+
+            if (hBtn != IntPtr.Zero)
+                PostMessage(hBtn, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+            }
+
+        private static IntPtr FindDescendantByClassAndText(IntPtr hWndParent, string className, string text)
+            {
+            IntPtr found = IntPtr.Zero;
+            EnumChildWindows(hWndParent, delegate(IntPtr h, IntPtr l)
+                {
+                StringBuilder sbClass = new StringBuilder(256);
+                StringBuilder sbText = new StringBuilder(256);
+                GetClassName(h, sbClass, 256);
+                GetWindowText(h, sbText, 256);
+                if (sbClass.ToString() == className && sbText.ToString() == text)
+                    {
+                    found = h;
+                    return false;
+                    }
+                found = FindDescendantByClassAndText(h, className, text);
+                return found == IntPtr.Zero;
+                }, IntPtr.Zero);
+            return found;
             }
 
         private static IntPtr FindSelectionWindow(uint pid)

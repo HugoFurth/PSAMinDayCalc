@@ -67,5 +67,14 @@ namespace PairingInspect2.Properties
                 resourceCulture = value;
             }
         }
+
+        internal static System.Drawing.Bitmap Zephyr_Data_Systems
+        {
+            get
+            {
+                object obj = ResourceManager.GetObject("Zephyr Data Systems", resourceCulture);
+                return ((System.Drawing.Bitmap)(obj));
+            }
+        }
     }
 }

@@ -111,7 +111,17 @@ namespace MinDayProcessNS
                 (bps = new CTBidPeriods()).Fill("1001");
                 EvalMS = new EvaluateMS();
                 ctmss = new CTMSs();
-                SFIConfigUtils.AssemblyConfig.SetAppConfig(Assembly.GetExecutingAssembly().Location, Assembly.GetExecutingAssembly().GetName().Name);
+                // Section name is hardcoded, not Assembly.GetExecutingAssembly().GetName().Name --
+                // AssemblyConfig.SetAppConfig looks for a "<AssemblyName>.Properties.Settings"
+                // section in the config at AssemblyLocation. When this code is merged into
+                // PrgInsp.exe (ILRepack, 0PairingInspect2Merge.bat), GetExecutingAssembly()
+                // resolves to PrgInsp.exe itself, not MinDayProcess -- the dynamic name would
+                // look for a nonexistent "PrgInsp.Properties.Settings" section and throw
+                // (confirmed live: "Cannot find 'PrgInsp.Properties.Settings' section in config
+                // file" when invoking Recalculate Min Day from PairingInspect2). The deployed
+                // config's actual section is always named "MinDayProcess.Properties.Settings"
+                // regardless of which exe this code physically ends up inside.
+                SFIConfigUtils.AssemblyConfig.SetAppConfig(Assembly.GetExecutingAssembly().Location, "MinDayProcess");
                 String ExcludeableCodesToLoadProp;
                 if (!SFIConfigUtils.AssemblyConfig.Settings.TryGetValue("ExcludeableCodes", out ExcludeableCodesToLoadProp))
                     throw new Exception("ExcludeableCodes not set");
@@ -405,8 +415,8 @@ namespace MinDayProcessNS
                 ModDutiesList = CreateModDutiesList(AllTrueDuties);
                 if (ModDutiesList.Count > 0 || iLayoverPay > 0)
                     {
-                    uint bypassMarker = BypassAndCreatePXIfNeeded(prgID, prgDate, ppAction);
-                    if (bypassMarker != 0 && iLayoverPay == 0)
+                    uint bypassMarker = BypassAndCreatePXIfNeeded(prgID, prgDate, ppAction);    
+                    if (bypassMarker != 0)
                         {
                         Bypassed = true;
                         MinDayMarker = bypassMarker;
@@ -714,6 +724,27 @@ namespace MinDayProcessNS
         private bool CreatePX(string prgID, string prgDate)
             {
             try {
+                // InsertException has no delete/dedup step of its own -- without this check,
+                // re-evaluating a pairing while the mixed-crew condition stays true (e.g. across
+                // several batch passes) inserts another identical PX row every time (confirmed
+                // live: W7061 and A7441 both ended up with 2 duplicate PX(6500) rows this way).
+                if (prg.PXExists(prgID, prgDate, 6500))
+                    {
+                    UpdateStatus(MinDayStatus.DetailedInfo, "PX already exists for " + prgID + " " + prgDate + " -- not adding another");
+                    return true;
+                    }
+
+                // No active row, but a History-marked one may exist (e.g. the pairing was
+                // rebuilt/committed since the condition last applied, which flips old PX
+                // rows to 'H' -- never deletes them) and the condition has now genuinely
+                // recurred. Reactivate that row instead of inserting a duplicate.
+                string severity = new CTERs().FindSeverity(6500);
+                if (prg.ReactivatePX(prgID, prgDate, 6500, severity))
+                    {
+                    UpdateStatus(MinDayStatus.DetailedInfo, "PX reactivated for " + prgID + " " + prgDate);
+                    return true;
+                    }
+
                 PairingDuty pdlast = prg.FindAllDuties().Find(s => s.DutyPeriod == prg.NumDuties);
 
                 int i = prg.InsertException(prg.PrgHdr.PrgID,prg.PrgHdr.PrgDate,pdlast.Report,pdlast.ActEnd,6500,_userID);

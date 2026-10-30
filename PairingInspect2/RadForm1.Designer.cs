@@ -29,6 +29,11 @@ namespace PairingInspect2
         private void InitializeComponent()
         {
             System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(RadForm1));
+            this.menuStrip1 = new System.Windows.Forms.MenuStrip();
+            this.fileToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.connectionInfoToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.aboutToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.exitToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.office2010BlackTheme1 = new Telerik.WinControls.Themes.Office2010BlackTheme();
             this.tabMain = new Telerik.WinControls.UI.RadPageView();
             this.tabPageInspect = new Telerik.WinControls.UI.RadPageViewPage();
@@ -38,6 +43,8 @@ namespace PairingInspect2
             this.btnEvaluatePairing = new Telerik.WinControls.UI.RadButton();
             this.btnRecalculateMinDay = new Telerik.WinControls.UI.RadButton();
             this.btnLaunchCTWPM = new Telerik.WinControls.UI.RadDropDownButton();
+            this.btnPrintPairing = new Telerik.WinControls.UI.RadDropDownButton();
+            this.lblOutput = new System.Windows.Forms.Label();
             this.lblStatusTitle = new System.Windows.Forms.Label();
             this.lblStatusValue = new System.Windows.Forms.Label();
             this.lblCrewTypeTitle = new System.Windows.Forms.Label();
@@ -62,6 +69,7 @@ namespace PairingInspect2
             this.tabPageInspect.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.btnEvaluatePairing)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnRecalculateMinDay)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.btnPrintPairing)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnLaunchCTWPM)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.cboRecentPairings)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnLookUp)).BeginInit();
@@ -72,10 +80,52 @@ namespace PairingInspect2
             ((System.ComponentModel.ISupportInitialize)(this.txtExceptionsToDate)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.txtExceptionsFromDate)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this)).BeginInit();
+            this.menuStrip1.SuspendLayout();
             this.SuspendLayout();
-            // 
+            //
+            // menuStrip1
+            //
+            this.menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.fileToolStripMenuItem});
+            this.menuStrip1.Location = new System.Drawing.Point(0, 0);
+            this.menuStrip1.Name = "menuStrip1";
+            this.menuStrip1.Size = new System.Drawing.Size(1200, 24);
+            this.menuStrip1.TabIndex = 20;
+            this.menuStrip1.Text = "menuStrip1";
+            //
+            // fileToolStripMenuItem
+            //
+            this.fileToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.connectionInfoToolStripMenuItem,
+            this.aboutToolStripMenuItem,
+            this.exitToolStripMenuItem});
+            this.fileToolStripMenuItem.Name = "fileToolStripMenuItem";
+            this.fileToolStripMenuItem.Size = new System.Drawing.Size(37, 20);
+            this.fileToolStripMenuItem.Text = "&File";
+            //
+            // connectionInfoToolStripMenuItem
+            //
+            this.connectionInfoToolStripMenuItem.Name = "connectionInfoToolStripMenuItem";
+            this.connectionInfoToolStripMenuItem.Size = new System.Drawing.Size(160, 22);
+            this.connectionInfoToolStripMenuItem.Text = "&Connection Info";
+            this.connectionInfoToolStripMenuItem.Click += new System.EventHandler(this.connectionInfoToolStripMenuItem_Click);
+            //
+            // aboutToolStripMenuItem
+            //
+            this.aboutToolStripMenuItem.Name = "aboutToolStripMenuItem";
+            this.aboutToolStripMenuItem.Size = new System.Drawing.Size(160, 22);
+            this.aboutToolStripMenuItem.Text = "&About";
+            this.aboutToolStripMenuItem.Click += new System.EventHandler(this.aboutToolStripMenuItem_Click);
+            //
+            // exitToolStripMenuItem
+            //
+            this.exitToolStripMenuItem.Name = "exitToolStripMenuItem";
+            this.exitToolStripMenuItem.Size = new System.Drawing.Size(160, 22);
+            this.exitToolStripMenuItem.Text = "E&xit";
+            this.exitToolStripMenuItem.Click += new System.EventHandler(this.exitToolStripMenuItem_Click);
+            //
             // tabMain
-            // 
+            //
             this.tabMain.Controls.Add(this.tabPageInspect);
             this.tabMain.Controls.Add(this.tabPageMinDayExceptions);
             this.tabMain.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -93,6 +143,8 @@ namespace PairingInspect2
             this.tabPageInspect.Controls.Add(this.btnEvaluatePairing);
             this.tabPageInspect.Controls.Add(this.btnRecalculateMinDay);
             this.tabPageInspect.Controls.Add(this.btnLaunchCTWPM);
+            this.tabPageInspect.Controls.Add(this.btnPrintPairing);
+            this.tabPageInspect.Controls.Add(this.lblOutput);
             this.tabPageInspect.Controls.Add(this.lblStatusTitle);
             this.tabPageInspect.Controls.Add(this.lblStatusValue);
             this.tabPageInspect.Controls.Add(this.lblCrewTypeTitle);
@@ -141,7 +193,27 @@ namespace PairingInspect2
             this.btnLaunchCTWPM.Text = "Pairing Function";
             this.btnLaunchCTWPM.ThemeName = "ControlDefault";
             this.btnLaunchCTWPM.Click += new System.EventHandler(this.btnLaunchCTWPM_Click);
-            // 
+            //
+            // btnPrintPairing
+            //
+            this.btnPrintPairing.Location = new System.Drawing.Point(1070, 233);
+            this.btnPrintPairing.Name = "btnPrintPairing";
+            this.btnPrintPairing.Size = new System.Drawing.Size(90, 22);
+            this.btnPrintPairing.TabIndex = 18;
+            this.btnPrintPairing.Text = "Print";
+            this.btnPrintPairing.ThemeName = "ControlDefault";
+            this.btnPrintPairing.Click += new System.EventHandler(this.btnPrintPairing_Click);
+            //
+            // lblOutput
+            //
+            this.lblOutput.AutoSize = true;
+            this.lblOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
+            this.lblOutput.Location = new System.Drawing.Point(1010, 236);
+            this.lblOutput.Name = "lblOutput";
+            this.lblOutput.Size = new System.Drawing.Size(55, 17);
+            this.lblOutput.TabIndex = 26;
+            this.lblOutput.Text = "Output:";
+            //
             // lblStatusTitle
             // 
             this.lblStatusTitle.AutoSize = true;
@@ -213,7 +285,7 @@ namespace PairingInspect2
             this.cboRecentPairings.DropDownAnimationEnabled = true;
             this.cboRecentPairings.Location = new System.Drawing.Point(330, 49);
             this.cboRecentPairings.Name = "cboRecentPairings";
-            this.cboRecentPairings.Size = new System.Drawing.Size(300, 20);
+            this.cboRecentPairings.Size = new System.Drawing.Size(150, 20);
             this.cboRecentPairings.TabIndex = 5;
             this.cboRecentPairings.ThemeName = "ControlDefault";
             this.cboRecentPairings.SelectedIndexChanged += new Telerik.WinControls.UI.Data.PositionChangedEventHandler(this.cboRecentPairings_SelectedIndexChanged);
@@ -364,19 +436,26 @@ namespace PairingInspect2
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(1200, 781);
+            this.ClientSize = new System.Drawing.Size(1200, 805);
             this.Controls.Add(this.tabMain);
+            this.Controls.Add(this.menuStrip1);
+            this.MainMenuStrip = this.menuStrip1;
+            this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
+            this.MaximizeBox = false;
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.Name = "RadForm1";
             this.Text = "Pairing Inspect";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.RadForm1_FormClosing);
             this.ThemeName = "Office2010Black";
+            this.menuStrip1.ResumeLayout(false);
+            this.menuStrip1.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.tabMain)).EndInit();
             this.tabMain.ResumeLayout(false);
             this.tabPageInspect.ResumeLayout(false);
             this.tabPageInspect.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.btnEvaluatePairing)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnRecalculateMinDay)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.btnPrintPairing)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnLaunchCTWPM)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.cboRecentPairings)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnLookUp)).EndInit();
@@ -414,6 +493,13 @@ namespace PairingInspect2
         private Telerik.WinControls.UI.RadButton btnRecalculateMinDay;
         private Telerik.WinControls.UI.RadButton btnEvaluatePairing;
         private Telerik.WinControls.UI.RadDropDownButton btnLaunchCTWPM;
+        private Telerik.WinControls.UI.RadDropDownButton btnPrintPairing;
+        private System.Windows.Forms.Label lblOutput;
+        private System.Windows.Forms.MenuStrip menuStrip1;
+        private System.Windows.Forms.ToolStripMenuItem fileToolStripMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem connectionInfoToolStripMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem aboutToolStripMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem exitToolStripMenuItem;
         private System.Windows.Forms.Label lblExceptionsFromDate;
         private System.Windows.Forms.Label lblExceptionsToDate;
         private Telerik.WinControls.UI.RadDateTimePicker txtExceptionsFromDate;

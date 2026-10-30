@@ -5,12 +5,13 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("PairingInspect2")]
-[assembly: AssemblyDescription("")]
+[assembly: AssemblyTitle("Pairing Inspect")]
+[assembly: AssemblyDescription("Inspect pairings and recalculate Min Day credit.\r\n\r\nThis software is proprietary and confidential.\r\n\r\n" +
+                                "Unauthorized use, reproduction, or distribution is prohibited.")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("PairingInspect2")]
-[assembly: AssemblyCopyright("Copyright ©  2026")]
+[assembly: AssemblyCompany("Zephyr Data Systems")]
+[assembly: AssemblyProduct("Pairing Inspect")]
+[assembly: AssemblyCopyright("© 1996-2026. All rights reserved")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -32,5 +33,5 @@ using System.Runtime.InteropServices;
 // You can specify all the values or you can default the Build and Revision Numbers 
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.0.0.3")]
+[assembly: AssemblyFileVersion("1.0.0.3")]
