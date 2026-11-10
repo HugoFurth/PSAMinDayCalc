@@ -774,32 +774,56 @@ namespace MinDayProcessNS
 
             List<ModDuty> ModDutyList = new List<ModDuty>();
 
-            // special check for 1-duty trips
-            if (MINDAYCREDIT == MINDAYCREDIT35HR && pdList.Count() == 1)
+            // UNREACHABLE: ProcessPairing's own "if (prg.PrgHdr.NumDutyPeriods == 1) ...
+            // return false;" early-exit (search "Single-duty pairing -- min day not
+            // applicable") already returns before CreateModDutiesList is ever called for a
+            // genuine 1-duty pairing -- so pdListComplete.Count() here can never be 1.
+            // Gated deliberately on pdListComplete (the real, unfiltered duty count), not
+            // pdList (post-ExcludeableCodes) -- a multi-duty pairing where GRS/LFT codes
+            // filter pdList down to a single remaining entry is NOT a 1-duty trip, and
+            // must NOT take this branch (confirmed live: A7742H/2026-03-25, a real 3-duty
+            // pairing, was incorrectly falling into this branch via pdList.Count()==1
+            // before this fix, combining the first-day and last-day rules onto duty 1
+            // alone via AND even though duty 1 isn't the pairing's actual last day).
+            // Kept rather than deleted in case the upstream guard is ever removed or
+            // relocated, at which point this would need re-verifying against the loop
+            // below for consistency rather than silently resurrecting stale logic.
+            if (MINDAYCREDIT == MINDAYCREDIT35HR && pdListComplete.Count() == 1)
                 {
-                if (AreAnyLegsInDutyFakeDeadhead(1) || 
-                   (pdList[0].Report.TimeAsMins > 720 && 
-                   (pdList[0].ActEnd.TimeAsMins < 1020 && pdList[0].EstEnd.TimeAsMins < 1020 && pdList[0].SkedEnd.TimeAsMins < 1020)))
+                if (AreAnyLegsInDutyFakeDeadhead(1) ||
+                   (pdListComplete[0].Report.TimeAsMins > 720 &&
+                   (pdListComplete[0].ActEnd.TimeAsMins < 1020 && pdListComplete[0].EstEnd.TimeAsMins < 1020 && pdListComplete[0].SkedEnd.TimeAsMins < 1020)))
                     { }  // no min day
                 else
                     {
-                    AddDutyPeriodToListIfNeeded(ModDutyList,pdList[0]);
+                    AddDutyPeriodToListIfNeeded(ModDutyList, pdListComplete[0]);
                     }
+                return ModDutyList;
                 }
-            else // multiple duty trip 
-                {
-                foreach (PairingDuty pd in pdList)
-                    {
-            //        if (AreAnyLegsInDutyFakeDeadhead(pd.DutyPeriod))  // removed due to new contract 09/01/2022
-            //            continue;
-                    if (MINDAYCREDIT == MINDAYCREDIT35HR && pd.DutyPeriod == 1 && pd.Report.TimeAsMins >= 720) // no calc needed if reports after 12:00 local on first day of trip (old rules only)
-                        continue;
-                    if (MINDAYCREDIT == MINDAYCREDIT35HR && pd.DutyPeriod == pdList.Count() && // no calc needed if releases before or equal to 17:00 local on last day of trip (old rules only)
-                        (pd.ActEnd.TimeAsMins <= 1020 && pd.EstEnd.TimeAsMins <= 1020 && pd.SkedEnd.TimeAsMins <= 1020))
-                        continue;
 
-                    AddDutyPeriodToListIfNeeded(ModDutyList, pd);
+            // The real path -- always taken in practice (see comment above). First/last
+            // day are each checked against the real pairing's own duty numbering
+            // (pdListComplete.Count() for "last", never pdList.Count()) so that
+            // ExcludeableCodes filtering some duties out of pdList can't make a different,
+            // non-last duty get mistaken for the trip's actual last day.
+            int lastDutyPeriod = pdListComplete.Count();
+            foreach (PairingDuty pd in pdList)
+                {
+        //        if (AreAnyLegsInDutyFakeDeadhead(pd.DutyPeriod))  // removed due to new contract 09/01/2022
+        //            continue;
+                if (MINDAYCREDIT == MINDAYCREDIT35HR && pd.DutyPeriod == 1 && pd.Report.TimeAsMins >= 720) // no calc needed if reports after 12:00 local on first day of trip (old rules only)
+                    {
+                    UpdateStatus(MinDayStatus.DetailedInfo, "No Min Day on FA pairing for duty 1 -- reports after 12:00 noon local");
+                    continue;
                     }
+                if (MINDAYCREDIT == MINDAYCREDIT35HR && pd.DutyPeriod == lastDutyPeriod && // no calc needed if releases before or equal to 17:00 local on last day of trip (old rules only)
+                    (pd.ActEnd.TimeAsMins <= 1020 && pd.EstEnd.TimeAsMins <= 1020 && pd.SkedEnd.TimeAsMins <= 1020))
+                    {
+                    UpdateStatus(MinDayStatus.DetailedInfo, "No Min Day on FA pairing for duty " + pd.DutyPeriod + " (last day) -- releases at or before 17:00 local");
+                    continue;
+                    }
+
+                AddDutyPeriodToListIfNeeded(ModDutyList, pd);
                 }
 
             return ModDutyList;
