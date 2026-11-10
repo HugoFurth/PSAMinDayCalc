@@ -9,6 +9,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 using SFIConfigUtils;
@@ -37,11 +38,29 @@ namespace PairingInspect2
         ContextMenuStrip ctwpmFunctionMenu;
         ToolStripMenuItem itemModify;
         ContextMenuStrip exceptionsPairingMenu;
+        ContextMenuStrip printFunctionMenu;
         PXExceptionRow exceptionsContextRow; // row the exceptions grid's PairingID right-click menu is currently acting on
         Dictionary<string, string> recentPairingLookup; // displayed "PairingID MM/DD" -> full stored "PairingID InternalDate" entry
+        // Full stored "PairingID InternalDate" entry -> the color it should show as in the
+        // Recent Pairings box (currently only ever Red, for a Canceled pairing). Session-
+        // only -- populated as AddToRecentList sees each pairing's current status, not
+        // persisted and not reset by RefreshRecentComboBox, so an entry keeps its color
+        // across dropdown rebuilds but a persisted entry from a PRIOR session shows no
+        // color at all until it's looked up again this session.
+        Dictionary<string, Color> recentPairingColor = new Dictionary<string, Color>();
         Timer securitySessionTimer;
 
-        public RadForm1()
+        // True while the Inspect tab is showing a pairing loaded from a JSON file
+        // (DisplayProposedPairing) instead of a real, DB-backed lookup -- it has no
+        // CrewTrac record yet, so Recalculate/Evaluate/Pairing Function (all of which
+        // act on a real pairing number) stay disabled the whole time this is set. Reset
+        // to false the moment a real lookup runs (btnLookUp_Click), regardless of outcome.
+        bool viewingProposedPairing;
+
+        // args -- e.g. { "A7669", "20261103" } -- lets a launcher (CrewRec) open PrgInsp
+        // straight to a specific pairing instead of whatever was last viewed. Optional so
+        // existing callers (the designer, any other `new RadForm1()`) keep compiling.
+        public RadForm1(string[] args = null)
         {
             // .NET scopes user settings (RecentPairings, LastPairingID, print preview
             // size, grid layouts) to the assembly's own version number -- a version
@@ -63,6 +82,15 @@ namespace PairingInspect2
             RadMessageBox.ThemeName = (new Telerik.WinControls.Themes.Office2010BlackTheme()).ThemeName;
             if (this.DesignMode)
                 return;
+
+            // Only ever 2 fixed pages (Inspect/Exceptions) -- the strip's scroll-left/
+            // scroll-right arrows (permanently disabled, nothing to scroll to) and its
+            // close ("x") button (closing the only two tabs makes no sense here) are
+            // pure clutter. StripViewButtons.None removes all of them at once.
+            RadPageViewStripElement tabStrip = tabMain.ViewElement as RadPageViewStripElement;
+            if (tabStrip != null)
+                tabStrip.StripButtons = StripViewButtons.None;
+
             new CTAirlineHeader().Fill(); // always read ah first.
             prg = new CTPairing();
             MinDayNameResolver.LoadDisplayNames(prg.Connection);
@@ -81,7 +109,9 @@ namespace PairingInspect2
             txtExceptionsFromDate.Leave += txtExceptionsFromDate_Leave;
             SetupLaunchCtwpmButton();
             SetupPrintPairingButton();
+            SetupPairingDragDrop();
             SetupSecuritySessionTimer();
+            cboRecentPairings.VisualListItemFormatting += CboRecentPairings_VisualListItemFormatting;
 
             txtPairingID.Text = Properties.Settings.Default.LastPairingID;
             txtPairingDate.NullableValue = InternalDateToNullable(Properties.Settings.Default.LastPairingDate);
@@ -89,7 +119,21 @@ namespace PairingInspect2
             txtExceptionsToDate.NullableValue = InternalDateToNullable(Properties.Settings.Default.LastExceptionsToDate);
             RefreshRecentComboBox();
 
-            if (!string.IsNullOrWhiteSpace(txtPairingID.Text) && txtPairingDate.NullableValue.HasValue)
+            // A single .json file argument is how a double-click on a pairing-load file
+            // (Windows file-type association) launches us -- same JSON a drag-drop of
+            // that file onto the Inspect tab loads, see LoadProposedPairingFromJsonFile.
+            // A pairing passed on the command line as two args takes precedence over
+            // whatever was last viewed -- same TryParsePairingRef parsing the drag-drop
+            // path uses, so "PrgInsp.exe A7669 20261103" behaves identically to dropping
+            // "A7669 20261103" onto the Inspect tab. Bad/missing args just fall through
+            // to the normal last-pairing restore below -- no error shown either way.
+            string cmdLinePrgID;
+            DateTime? cmdLinePrgDate;
+            if (args != null && args.Length == 1 && IsJsonPairingFile(args[0]))
+                LoadProposedPairingFromJsonFile(args[0]);
+            else if (args != null && args.Length >= 2 && TryParsePairingRef(args[0] + " " + args[1], out cmdLinePrgID, out cmdLinePrgDate))
+                LookUpParsedPairing(cmdLinePrgID, cmdLinePrgDate.Value);
+            else if (!string.IsNullOrWhiteSpace(txtPairingID.Text) && txtPairingDate.NullableValue.HasValue)
                 btnLookUp_Click(this, EventArgs.Empty);
 
             if (txtExceptionsFromDate.NullableValue.HasValue && txtExceptionsToDate.NullableValue.HasValue)
@@ -98,6 +142,8 @@ namespace PairingInspect2
 
         private void cboRecentPairings_SelectedIndexChanged(object sender, Telerik.WinControls.UI.Data.PositionChangedEventArgs e)
         {
+            UpdateRecentPairingsBoxForeColor();
+
             if (cboRecentPairings.SelectedItem == null)
                 return;
             string entry;
@@ -111,9 +157,14 @@ namespace PairingInspect2
             btnLookUp_Click(sender, e);
         }
 
-        private void AddToRecentList(string pairingID, string pairingDate)
+        private void AddToRecentList(string pairingID, string pairingDate, Color? statusColor = null)
         {
             string entry = pairingID + " " + pairingDate;
+
+            if (statusColor.HasValue)
+                recentPairingColor[entry] = statusColor.Value;
+            else
+                recentPairingColor.Remove(entry);
 
             StringCollection recent = Properties.Settings.Default.RecentPairings;
             if (recent == null)
@@ -155,6 +206,48 @@ namespace PairingInspect2
                 }
             cboRecentPairings.DataSource = displayItems;
             cboRecentPairings.SelectedIndexChanged += cboRecentPairings_SelectedIndexChanged;
+            // The handler above is deliberately detached during the DataSource assignment
+            // (same reason as always -- avoid a spurious re-lookup from the implicit
+            // index reset), so whatever selection that reset lands on never ran through
+            // it. Update the closed-box color explicitly here too, not just inside the
+            // handler, to cover that case.
+            UpdateRecentPairingsBoxForeColor();
+        }
+
+        // Colors each Recent Pairings dropdown entry from recentPairingColor (keyed by the
+        // same "PrgID InternalDate" string recentPairingLookup maps display text to) --
+        // red for a Canceled pairing, default otherwise/unknown. Covers the OPEN popup's
+        // list items; UpdateRecentPairingsBoxForeColor (below) covers the CLOSED box's
+        // own displayed text, which doesn't go through this event.
+        private void CboRecentPairings_VisualListItemFormatting(object sender, VisualItemFormattingEventArgs e)
+        {
+            RadListDataItem dataItem = e.VisualItem.Data;
+            string entry;
+            Color color;
+            if (dataItem != null && dataItem.Text != null && recentPairingLookup != null &&
+                recentPairingLookup.TryGetValue(dataItem.Text, out entry) &&
+                recentPairingColor.TryGetValue(entry, out color))
+                e.VisualItem.ForeColor = color;
+            else
+                e.VisualItem.ResetValue(LightVisualElement.ForeColorProperty, ValueResetFlags.Local);
+        }
+
+        // RadDropDownList's closed-box display text is a separate visual element from the
+        // popup list items -- VisualListItemFormatting never fires for it, so it needs its
+        // own explicit color set, called both whenever the selection actually changes and
+        // whenever the list is rebound (DataSource reset implicitly changes what's shown
+        // without raising SelectedIndexChanged, since that handler is detached for the
+        // assignment -- see RefreshRecentComboBox).
+        private void UpdateRecentPairingsBoxForeColor()
+        {
+            string entry;
+            Color color;
+            if (cboRecentPairings.SelectedItem != null &&
+                recentPairingLookup.TryGetValue(cboRecentPairings.SelectedItem.ToString(), out entry) &&
+                recentPairingColor.TryGetValue(entry, out color))
+                cboRecentPairings.ForeColor = color;
+            else
+                cboRecentPairings.ForeColor = SystemColors.ControlText;
         }
 
         // RadDropDownButton is used only for its arrow chrome -- its own Items/RadMenuItem popup
@@ -182,51 +275,34 @@ namespace PairingInspect2
             e.Cancel = true;
         }
 
-        // Unlike btnLaunchCTWPM (where both the body and the arrow do the same thing,
-        // so its native dropdown is cancelled in favor of a manually-shown
-        // ContextMenuStrip), this one genuinely needs the two areas to differ: the
-        // button body runs whichever of the 3 modes was used last (persisted via
-        // Settings.LastPrintAction), and the arrow offers the other two as
-        // alternatives. That's exactly what DropDownButtonElement.DropDownMenu is
-        // for, so it's left to its native behavior here instead of being suppressed.
+        // Same pattern as btnLaunchCTWPM: body and arrow do the same thing (show the
+        // menu), so the native dropdown is cancelled in favor of a manually-shown
+        // ContextMenuStrip. The button itself is just a static "Output" label -- all
+        // 3 modes are plain menu choices, there's no sticky/remembered default.
         private void SetupPrintPairingButton()
         {
-            PrintMode saved;
-            if (!Enum.TryParse(Properties.Settings.Default.LastPrintAction, out saved))
-                saved = PrintMode.Print;
-            defaultPrintMode = saved;
-            btnPrintPairing.Text = PrintModeLabel(defaultPrintMode);
+            btnPrintPairing.Text = "Output";
 
-            RebuildPrintDropdown();
+            printFunctionMenu = new ContextMenuStrip();
+
+            ToolStripMenuItem itemPrint = new ToolStripMenuItem("Print");
+            itemPrint.Click += (s, e) => DoPrint();
+            printFunctionMenu.Items.Add(itemPrint);
+
+            ToolStripMenuItem itemPreview = new ToolStripMenuItem("Print Preview");
+            itemPreview.Click += (s, e) => DoPrintPreview();
+            printFunctionMenu.Items.Add(itemPreview);
+
+            ToolStripMenuItem itemSaveAsPdf = new ToolStripMenuItem("Save as PDF");
+            itemSaveAsPdf.Click += (s, e) => DoSaveAsPdf();
+            printFunctionMenu.Items.Add(itemSaveAsPdf);
+
+            btnPrintPairing.DropDownButtonElement.DropDownOpening += btnPrintPairing_DropDownOpening;
         }
 
-        private void RebuildPrintDropdown()
+        private void btnPrintPairing_DropDownOpening(object sender, CancelEventArgs e)
         {
-            RadDropDownMenu menu = btnPrintPairing.DropDownButtonElement.DropDownMenu;
-            menu.Items.Clear();
-
-            foreach (PrintMode mode in new[] { PrintMode.Print, PrintMode.Preview, PrintMode.SaveAsPdf })
-            {
-                if (mode == defaultPrintMode)
-                    continue;
-
-                PrintMode captured = mode;
-                RadMenuItem item = new RadMenuItem(PrintModeLabel(mode));
-                item.Click += (s, e) => RunPrintMode(captured);
-                menu.Items.Add(item);
-            }
-        }
-
-        private void SetDefaultPrintMode(PrintMode mode)
-        {
-            if (mode == defaultPrintMode)
-                return;
-
-            defaultPrintMode = mode;
-            btnPrintPairing.Text = PrintModeLabel(mode);
-            Properties.Settings.Default.LastPrintAction = mode.ToString();
-            Properties.Settings.Default.Save();
-            RebuildPrintDropdown();
+            e.Cancel = true;
         }
 
         // Same File menu as PSAPBSX's own main form (Connection Info / About / Exit).
@@ -272,52 +348,61 @@ namespace PairingInspect2
             LaunchCtwpm(CtwpmSelectionAutomator.FunctionModify);
         }
 
+        // Shared "operation in progress" gate for the three pairing-level action buttons.
+        // Recalculate, Evaluate, and Pairing Function (Inquire/Modify) all act on the same
+        // pairing -- and Pairing Function's Inquire/Modify can launch the exact same CTWPM
+        // process Evaluate does -- so starting any one of them disables all three, not just
+        // the one clicked, rather than letting the others run concurrently against it.
+        private void SetPairingActionButtonsBusy(bool busy)
+            {
+            if (busy)
+                {
+                btnRecalculateMinDay.Enabled = false;
+                btnEvaluatePairing.Enabled = false;
+                btnLaunchCTWPM.Enabled = false;
+                }
+            else
+                {
+                // Same conditions btnLookUp_Click's own success path uses -- Pairing
+                // Function has no such gating anywhere else otherwise, so it's
+                // unconditional except for the viewingProposedPairing override, which
+                // applies to all three alike (see that field's own comment).
+                btnRecalculateMinDay.Enabled = !viewingProposedPairing && prg.PrgHdr != null && !prg.PrgHdr.Canceled && !minDayVersionMismatch && !RecalculateBlockedByMarkerStatus();
+                btnEvaluatePairing.Enabled = !viewingProposedPairing && prg.PrgHdr != null && !prg.PrgHdr.Canceled;
+                btnLaunchCTWPM.Enabled = !viewingProposedPairing;
+                }
+            }
+
+        // MinDayProcess.ProcessPairing itself no-ops the instant it sees one of these two
+        // markers ("Min day already applied -- skipping" / "Min day condition not present -
+        // skipping") -- clicking Recalculate in either state can't do anything, so it stays
+        // disabled rather than inviting a click that's a guaranteed no-op. Exception/Error/
+        // Unknown all still leave Recalculate enabled -- those are exactly the states where
+        // running it again is meaningful (retry, or a pairing never yet examined).
+        private bool RecalculateBlockedByMarkerStatus()
+            {
+            if (prg.PrgHdr == null)
+                return false;
+            MinDayMarkerStatus status = MinDayNameResolver.Resolve(prg.PrgHdr.UpdateidUpdempno);
+            return status == MinDayMarkerStatus.Applied || status == MinDayMarkerStatus.NoUpdateNeeded;
+            }
+
         private void btnEvaluatePairing_Click(object sender, EventArgs e)
         {
             if (prg.PrgHdr == null)
                 return;
+            // Re-enabled in RefreshAfterCtwpmExit (success path) or EvaluatePairing's own
+            // catch (launch failure) -- never left permanently disabled either way.
+            SetPairingActionButtonsBusy(true);
             EvaluatePairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
         }
 
         private enum PrintMode { Print, Preview, SaveAsPdf }
 
-        private PrintMode defaultPrintMode = PrintMode.Print;
-
-        private static string PrintModeLabel(PrintMode mode)
-        {
-            switch (mode)
-            {
-                case PrintMode.Preview: return "Print Preview";
-                case PrintMode.SaveAsPdf: return "Save as PDF";
-                default: return "Print";
-            }
-        }
-
-        // Main button area: runs whichever mode is currently the default (see
-        // SetDefaultPrintMode). The dropdown arrow offers the other two.
+        // Body click shows the same menu the arrow does (see SetupPrintPairingButton).
         private void btnPrintPairing_Click(object sender, EventArgs e)
             {
-            RunPrintMode(defaultPrintMode);
-            }
-
-        private void RunPrintMode(PrintMode mode)
-            {
-            // Switch the button over as soon as the mode is picked, not after the
-            // task finishes -- Print/Preview's dialogs can sit open for a while.
-            SetDefaultPrintMode(mode);
-
-            switch (mode)
-                {
-                case PrintMode.Preview:
-                    DoPrintPreview();
-                    break;
-                case PrintMode.SaveAsPdf:
-                    DoSaveAsPdf();
-                    break;
-                default:
-                    DoPrint();
-                    break;
-                }
+            printFunctionMenu.Show(btnPrintPairing, new Point(0, btnPrintPairing.Height));
             }
 
         private void DoPrint()
@@ -616,6 +701,7 @@ namespace PairingInspect2
             }
             catch (Exception ex)
             {
+                SetPairingActionButtonsBusy(false);
                 RadMessageBox.Show("Failed to launch CTWPM: " + ex.Message);
             }
         }
@@ -679,6 +765,15 @@ namespace PairingInspect2
                 {
                     RadMessageBox.Show("Error refreshing pairing: " + ex.Message);
                 }
+
+                // Matches btnEvaluatePairing_Click's disable -- only re-enabled here (not
+                // unconditionally) so a stale exit event for a pairing the user has since
+                // navigated away from can't re-enable the buttons out from under a still-
+                // in-progress Evaluate on whatever's now on screen; btnLookUp_Click already
+                // resets these independently for whatever pairing gets looked up next. Runs
+                // after the Assemble above (not before) so it reflects whatever marker CTWPM's
+                // Evaluate may have just left behind, not the stale pre-exit one.
+                SetPairingActionButtonsBusy(false);
             }));
         }
 
@@ -852,6 +947,10 @@ namespace PairingInspect2
                 return;
 
             minDayCriticalMessages.Clear();
+            SetPairingActionButtonsBusy(true);
+            btnRecalculateMinDay.Refresh(); // ProcessSinglePairing below is synchronous -- force the disabled state to paint before it blocks the UI thread
+            btnEvaluatePairing.Refresh();
+            btnLaunchCTWPM.Refresh();
             try
                 {
                 GetMinDayProcess().ProcessSinglePairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
@@ -870,16 +969,31 @@ namespace PairingInspect2
                 {
                 RadMessageBox.Show("Error recalculating min day: " + ex.Message);
                 }
+            finally
+                {
+                // Set unconditionally here too (not just on the try block's success path)
+                // so a pairing that threw mid-recalculate doesn't leave the buttons stuck
+                // disabled.
+                SetPairingActionButtonsBusy(false);
+                }
             }
 
         // RadTextBox/RadForm rather than RadMessageBox -- the trace can run to many lines
         // and the user needs to select/copy it, which RadMessageBox doesn't support well.
         private void ShowMinDayTrace(string trace)
         {
+            ShowSelectableMessage("Min Day Recalculation Trace", trace);
+        }
+
+        // Same selectable-text need as ShowMinDayTrace, generalized -- e.g. an exception
+        // message or a drag-drop diagnostic the user needs to copy/paste elsewhere, not
+        // just read, which RadMessageBox's plain label text doesn't support.
+        private void ShowSelectableMessage(string title, string text)
+        {
             using (RadForm dlg = new RadForm())
             {
                 dlg.ThemeName = RadMessageBox.ThemeName;
-                dlg.Text = "Min Day Recalculation Trace";
+                dlg.Text = title;
                 dlg.Width = 700;
                 dlg.Height = 500;
                 dlg.StartPosition = FormStartPosition.CenterParent;
@@ -890,7 +1004,7 @@ namespace PairingInspect2
                 txt.ReadOnly = true;
                 txt.Dock = DockStyle.Fill;
                 txt.Font = new Font(FontFamily.GenericMonospace, 9);
-                txt.Text = trace;
+                txt.Text = text;
 
                 RadPanel textPanel = new RadPanel();
                 textPanel.ThemeName = RadMessageBox.ThemeName;
@@ -931,6 +1045,19 @@ namespace PairingInspect2
 
         private void btnLookUp_Click(object sender, EventArgs e)
         {
+            // A real lookup always supersedes a JSON-loaded proposed pairing, success or
+            // not -- regardless of outcome, whatever's left on screen afterward is no
+            // longer the proposed one, so the action buttons' normal gating applies again,
+            // and everything DisplayProposedPairing hides needs to come back.
+            viewingProposedPairing = false;
+            lblCrewTypeTitle.Visible = true;
+            lblCrewTypeValue.Visible = true;
+            lblMinDayStatusTitle.Visible = true;
+            lblMinDayStatusValue.Visible = true;
+            btnRecalculateMinDay.Visible = true;
+            btnEvaluatePairing.Visible = true;
+            btnLaunchCTWPM.Visible = true;
+
             try
             {
                 string internalDate = NullableDateToInternal(txtPairingDate.NullableValue);
@@ -949,10 +1076,12 @@ namespace PairingInspect2
                     // CtwpmSelectionAutomator's no-args overload when PrgHdr is null,
                     // opening CTWPM blank for the user to fill in themselves.
                     itemModify.Enabled = true;
+                    btnLaunchCTWPM.Enabled = true;
 
                     crewGrid.DataSource = null;
                     grid.DataSource = null;
                     lblStatusValue.Text = "";
+                    lblStatusValue.ForeColor = SystemColors.ControlText;
                     lblCrewTypeValue.Text = "";
                     lblMinDayStatusValue.Text = "";
 
@@ -968,6 +1097,26 @@ namespace PairingInspect2
                 // forces the rebind.
                 crewOnPairing = new List<CrewMemOnPairing>(crewOnPairingLookup.List);
 
+                // FillActiveCrewOnPairing only ever sees mp.status='A' rows -- a cancelled
+                // pairing has none (cancelling flips every one of its crew to 'I'), so this
+                // is always empty for one. Fall back to every MP row the pairing has ever
+                // had and keep only the ones whose Updateid exactly matches the pairing's own
+                // PM.Updateid -- those are the crew who were actually on it at the moment it
+                // was cancelled (both get stamped from the same hold_upddate/hold_updtime in
+                // the native cancel call, confirmed in CT2410.cpp). Everything else in that
+                // list is unrelated prior history (an earlier, ordinary drop/reassignment)
+                // and is deliberately left out, not just hidden.
+                bool isCanceledCrewFallback = false;
+                if (crewOnPairing.Count == 0 && prg.PrgHdr.Canceled)
+                    {
+                    crewOnPairingLookup.FillAllCrewOnPairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+                    crewOnPairing = crewOnPairingLookup.List.Where(c =>
+                        c.UpdateidUpdempno == prg.PrgHdr.UpdateidUpdempno &&
+                        c.UpdateidUpddate == prg.PrgHdr.UpdateidUpddate &&
+                        c.UpdateidUpdtime == prg.PrgHdr.UpdateidUpdtime).ToList();
+                    isCanceledCrewFallback = true;
+                    }
+
                 openPositionsLookup.FillByPairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
 
                 List<CrewGridRow> crewGridRows = new List<CrewGridRow>();
@@ -979,7 +1128,8 @@ namespace PairingInspect2
                         LastFirstName = c.LastFirstName,
                         AssignCode = c.AssignCode,
                         PairingLineType = c.PairingLineType,
-                        IsOpen = false
+                        IsOpen = false,
+                        IsCanceledCrew = isCanceledCrewFallback
                     });
                 foreach (OTPM o in openPositionsLookup.List)
                     for (int i = 0; i < o.OpenCount; i++)
@@ -990,15 +1140,19 @@ namespace PairingInspect2
                 MinDayMarkerStatus minDayMarkerStatus = MinDayNameResolver.Resolve(prg.PrgHdr.UpdateidUpdempno);
                 DisplayHeader(minDayMarkerStatus);
                 PopulateGrid(minDayMarkerStatus);
-                AddToRecentList(txtPairingID.Text.Trim(), internalDate);
+                AddToRecentList(txtPairingID.Text.Trim(), internalDate, prg.PrgHdr.Canceled ? Color.Red : (Color?)null);
 
                 // A cancelled pairing has nothing left to recalculate or evaluate --
                 // Recalculate also stays gated on minDayVersionMismatch from
                 // CheckStandaloneMinDayProcessVersion, which Evaluate (a native CTWPM
-                // action, unrelated to MinDayProcess.dll) doesn't need.
-                btnRecalculateMinDay.Enabled = !prg.PrgHdr.Canceled && !minDayVersionMismatch;
+                // action, unrelated to MinDayProcess.dll) doesn't need -- and on the
+                // marker status itself (see RecalculateBlockedByMarkerStatus).
+                btnRecalculateMinDay.Enabled = !prg.PrgHdr.Canceled && !minDayVersionMismatch && !RecalculateBlockedByMarkerStatus();
                 btnEvaluatePairing.Enabled = !prg.PrgHdr.Canceled;
                 itemModify.Enabled = !prg.PrgHdr.Canceled;
+                // Not touched above like the other two -- restore it explicitly in case
+                // a JSON-loaded proposed pairing (DisplayProposedPairing) left it disabled.
+                btnLaunchCTWPM.Enabled = true;
             }
             catch (Exception ex)
             {
@@ -1011,6 +1165,7 @@ namespace PairingInspect2
             PairingHeader hdr = prg.PrgHdr;
 
             lblStatusValue.Text = hdr.Canceled ? "Canceled" : "Active";
+            lblStatusValue.ForeColor = hdr.Canceled ? Color.DarkRed : SystemColors.ControlText;
             lblCrewTypeValue.Text = CrewTypeDisplay(hdr.CrewType);
             // Min Day status doesn't apply to a cancelled pairing -- whatever marker
             // happens to be stored is leftover from before cancellation, not current.
@@ -1092,6 +1247,262 @@ namespace PairingInspect2
             return internalDate.Substring(4, 2) + "/" + internalDate.Substring(6, 2) + "/" + internalDate.Substring(2, 2);
         }
 
+        // Lets an external app -- or, for now, a quick manual test by dragging plain text
+        // out of Notepad -- drop a pairing onto the Inspect tab and have it look up/display
+        // automatically. Wired onto every control that visibly covers the tab (the tab page
+        // itself plus both grids) since WinForms drag events fire on whichever control is
+        // directly under the cursor at drop time, not bubbled up from a child to its parent.
+        private const string PairingRefDragFormat = "PSAMinDayCalc.PairingRef";
+
+        private void SetupPairingDragDrop()
+        {
+            RegisterPairingDropTarget(tabPageInspect);
+            RegisterPairingDropTarget(pnlGrid);
+            RegisterPairingDropTarget(pnlCrewGrid);
+            RegisterPairingDropTarget(grid);
+            RegisterPairingDropTarget(crewGrid);
+        }
+
+        private void RegisterPairingDropTarget(Control c)
+        {
+            c.AllowDrop = true;
+            c.DragEnter += PairingDropTarget_DragEnter;
+            c.DragDrop += PairingDropTarget_DragDrop;
+        }
+
+        private void PairingDropTarget_DragEnter(object sender, DragEventArgs e)
+        {
+            e.Effect = (e.Data.GetDataPresent(PairingRefDragFormat) || e.Data.GetDataPresent(DataFormats.Text) || GetDroppedJsonFile(e.Data) != null)
+                ? DragDropEffects.Copy : DragDropEffects.None;
+        }
+
+        // Dragging a single .json pairing-load file onto the tab is the other way (besides
+        // a command-line arg from a file-association double-click) to load a proposed
+        // pairing -- see LoadProposedPairingFromJsonFile. A multi-file drop isn't this;
+        // fall through to the text-payload path below, which will just fail to parse it.
+        private static string GetDroppedJsonFile(IDataObject data)
+        {
+            if (!data.GetDataPresent(DataFormats.FileDrop))
+                return null;
+            string[] files = (string[])data.GetData(DataFormats.FileDrop);
+            return (files != null && files.Length == 1 && IsJsonPairingFile(files[0])) ? files[0] : null;
+        }
+
+        private static bool IsJsonPairingFile(string path)
+        {
+            return !string.IsNullOrEmpty(path) && path.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && File.Exists(path);
+        }
+
+        private void PairingDropTarget_DragDrop(object sender, DragEventArgs e)
+        {
+            // OLE drag-drop calls in from COM (the source process's DoDragDrop), and an
+            // exception thrown from inside a .NET event handler invoked that way can get
+            // lost at the COM boundary before it ever reaches Application.ThreadException/
+            // AppDomain.UnhandledException -- wrap the whole thing so nothing goes silent.
+            try
+            {
+                string jsonFile = GetDroppedJsonFile(e.Data);
+                if (jsonFile != null)
+                {
+                    LoadProposedPairingFromJsonFile(jsonFile);
+                    return;
+                }
+
+                string payload = e.Data.GetDataPresent(PairingRefDragFormat)
+                    ? (string)e.Data.GetData(PairingRefDragFormat)
+                    : e.Data.GetDataPresent(DataFormats.Text) ? (string)e.Data.GetData(DataFormats.Text) : null;
+
+                string prgID;
+                DateTime? prgDate;
+                if (!TryParsePairingRef(payload, out prgID, out prgDate))
+                {
+                    ShowSelectableMessage("Drag/Drop Diagnostic",
+                        "Couldn't find a pairing ID and date in what was dropped." + Environment.NewLine + Environment.NewLine +
+                        "Raw payload: \"" + (payload ?? "<null>") + "\"");
+                    return;
+                }
+
+                LookUpParsedPairing(prgID, prgDate.Value);
+            }
+            catch (Exception ex)
+            {
+                ShowSelectableMessage("Drag/Drop Diagnostic", "Drop handler threw: " + ex);
+            }
+        }
+
+        // Shared final step for every "something external handed us a pairing" path --
+        // drag-drop, a startup command-line arg, and an already-running WM_COPYDATA
+        // request all converge here once they've got a parsed PrgID/date; only how they
+        // obtain that pair and react to a parse failure differs.
+        private void LookUpParsedPairing(string prgID, DateTime prgDate)
+        {
+            txtPairingID.Text = prgID;
+            txtPairingDate.NullableValue = prgDate;
+            btnLookUp_Click(this, EventArgs.Empty);
+        }
+
+        // Lets CrewRec (or anything else) hand a pairing to an ALREADY-RUNNING PrgInsp
+        // instance -- the command-line path above only covers a fresh launch. CrewRec
+        // finds this window via Process.GetProcessesByName("PrgInsp")[0].MainWindowHandle
+        // (hence: never rename the output exe away from "PrgInsp") and posts WM_COPYDATA
+        // with dwData = PairingRefCopyDataId and lpData = a UTF-16 "PrgID YYYYMMDD"
+        // string, the same shape TryParsePairingRef already accepts everywhere else.
+        private const int WM_COPYDATA = 0x004A;
+        private static readonly IntPtr PairingRefCopyDataId = (IntPtr)0x50524749; // "PRGI"
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct COPYDATASTRUCT
+        {
+            public IntPtr dwData;
+            public int cbData;
+            public IntPtr lpData;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_COPYDATA)
+            {
+                COPYDATASTRUCT cds = (COPYDATASTRUCT)Marshal.PtrToStructure(m.LParam, typeof(COPYDATASTRUCT));
+                if (cds.dwData == PairingRefCopyDataId)
+                {
+                    // Any other dwData is ignored entirely -- not ours, don't touch it,
+                    // don't even acknowledge it (fall through to base.WndProc below).
+                    HandleIncomingPairingRequest(cds);
+                    m.Result = (IntPtr)1; // standard WM_COPYDATA ack: nonzero = handled
+                    return;
+                }
+            }
+            base.WndProc(ref m);
+        }
+
+        private void HandleIncomingPairingRequest(COPYDATASTRUCT cds)
+        {
+            try
+            {
+                // cbData is a byte count; a UTF-16 string is 2 bytes/char. Reading by
+                // this exact length (rather than relying on PtrToStringUni's own
+                // null-terminator scan) works whether or not the sender null-terminated
+                // lpData.
+                string payload = cds.lpData == IntPtr.Zero || cds.cbData <= 0
+                    ? null
+                    : Marshal.PtrToStringUni(cds.lpData, cds.cbData / 2).TrimEnd('\0');
+
+                string prgID;
+                DateTime? prgDate;
+                if (!TryParsePairingRef(payload, out prgID, out prgDate))
+                    return; // silently ignore a malformed request -- same spirit as bad/missing cmdline args
+
+                if (WindowState == FormWindowState.Minimized)
+                    WindowState = FormWindowState.Normal;
+                // Plain Activate() can get lost to Windows' foreground-lock heuristics
+                // even for a window activating itself from its own message loop -- the
+                // TopMost toggle is the standard, reliable WinForms way to force it.
+                TopMost = true;
+                TopMost = false;
+                Activate();
+
+                tabMain.SelectedPage = tabPageInspect;
+                LookUpParsedPairing(prgID, prgDate.Value);
+            }
+            catch
+            {
+                // An external IPC request must never be able to take the app down --
+                // same reasoning as Program.cs's crash-log handlers, just silent here
+                // (no UI to show it in, and a bad request from CrewRec shouldn't pop a
+                // dialog over whatever the user's doing).
+            }
+        }
+
+        // Accepts the same "<PrgID> <YYYYMMDD>" shape AddToRecentList/cboRecentPairings
+        // already use internally -- a real drag source (e.g. CrewRec, once built) can send
+        // exactly that under PairingRefDragFormat -- or a human-typed date (MM/dd/yy,
+        // MM/dd/yyyy, etc.) after the pairing ID, for manual testing by dragging plain text
+        // out of Notepad/Notepad++.
+        private static bool TryParsePairingRef(string text, out string prgID, out DateTime? prgDate)
+        {
+            prgID = null;
+            prgDate = null;
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            string trimmed = text.Trim();
+            int spaceIdx = trimmed.IndexOf(' ');
+            if (spaceIdx <= 0)
+                return false;
+
+            prgID = trimmed.Substring(0, spaceIdx).Trim();
+            string dateToken = trimmed.Substring(spaceIdx + 1).Trim();
+
+            // Only try the internal YYYYMMDD path for an actual 8-digit numeric token --
+            // InternalDateToNullable's own guard only checks Length != 8, and "10/01/26"
+            // is ALSO 8 characters long (the slashes count), so it slipped past that guard
+            // and got misread as if "10/0" were a year -- confirmed live via the exact
+            // ArgumentOutOfRangeException this produced in CTDateFormat.AsDateTime.
+            if (dateToken.Length == 8 && dateToken.All(char.IsDigit))
+            {
+                prgDate = InternalDateToNullable(dateToken);
+                if (prgDate.HasValue)
+                    return true;
+            }
+
+            // Deliberately not DateTime.TryParse -- its two-digit-year expansion goes
+            // through the current culture's Calendar.TwoDigitYearMax, which rolled "26"
+            // into the wrong century on live testing instead of 2026. This app's dates are
+            // always 20xx (see CTDateFormat/PairingDateToDisplay's own MM/DD/YY convention),
+            // so a 2-digit year is resolved to 2000+yy explicitly, never left to .NET/the
+            // OS's own ambient year-window setting.
+            string[] mdyParts = dateToken.Split('/');
+            if (mdyParts.Length == 3)
+            {
+                int month, day, year;
+                if (int.TryParse(mdyParts[0], out month) && int.TryParse(mdyParts[1], out day) && int.TryParse(mdyParts[2], out year))
+                {
+                    if (year < 100)
+                        year += 2000;
+                    try
+                    {
+                        prgDate = new DateTime(year, month, day);
+                        return true;
+                    }
+                    catch (ArgumentOutOfRangeException) { }
+                }
+            }
+            // No year given ("MM/DD") -- infer one relative to today (see InferYearForMonth).
+            else if (mdyParts.Length == 2)
+            {
+                int month, day;
+                if (int.TryParse(mdyParts[0], out month) && int.TryParse(mdyParts[1], out day))
+                {
+                    try
+                    {
+                        prgDate = new DateTime(InferYearForMonth(month), month, day);
+                        return true;
+                    }
+                    catch (ArgumentOutOfRangeException) { }
+                }
+            }
+
+            prgID = null;
+            return false;
+        }
+
+        // No year given -- infer the most plausible one relative to today's date. Defaults
+        // to the current year, except right at a year boundary: if today is Nov/Dec and the
+        // given month is Jan/Feb, that's clearly meant as next year (dropping "01/15" in
+        // December means next January, not this one); the mirror image (today is Jan/Feb,
+        // given month is Nov/Dec) means last year's Nov/Dec instead.
+        private static int InferYearForMonth(int month)
+        {
+            int currentYear = DateTime.Now.Year;
+            int currentMonth = DateTime.Now.Month;
+
+            if ((currentMonth == 11 || currentMonth == 12) && (month == 1 || month == 2))
+                return currentYear + 1;
+            if ((currentMonth == 1 || currentMonth == 2) && (month == 11 || month == 12))
+                return currentYear - 1;
+            return currentYear;
+        }
+
         // NonFlyingPairingLeg/OtherAirlineDeadheadPairingLeg only expose SkedDeptDate
         // (already "MM/DD/YY"), not a raw internal date -- trim it to match FormatMMDD's output.
         private static string FormatMMDDFromDisplayDate(string mmddyy)
@@ -1145,6 +1556,7 @@ namespace PairingInspect2
                             ArrvTime = airLeg.LatestArrv.AsDisplayTime,
                             DeptTimeIsActual = airLeg.LatestDept.SEA == SEAType.Act,
                             ArrvTimeIsActual = airLeg.LatestArrv.SEA == SEAType.Act,
+                            IsCanceledLeg = airLeg.FlightStatus == "I",
                             Credit = legCredit
                         });
                     }
@@ -1278,6 +1690,192 @@ namespace PairingInspect2
             grid.DataSource = rows;
         }
 
+        // Shows a pairing straight from a CrewRec/solver pairing-load JSON file (see
+        // D:\Data\VS\CrewRec\customer-docs\pairing-load-schema.json) -- a proposed trip
+        // that has no CrewTrac record yet, so none of the real-pairing machinery
+        // (CTPairing.Assemble, MinDayDiffCalculator, CO/Trip Rig fields) applies to it.
+        // Reachable only by double-clicking a .json file (command-line arg, via Windows'
+        // file-type association) or dragging one onto the Inspect tab -- never by typing
+        // anything into the lookup fields, which are for real, DB-backed pairings only.
+        private void LoadProposedPairingFromJsonFile(string path)
+        {
+            try
+            {
+                string json = File.ReadAllText(path);
+                PairingLoadRoot root = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<PairingLoadRoot>(json);
+                if (root == null || root.pairings == null || root.pairings.Count == 0)
+                {
+                    ShowSelectableMessage("Pairing Load JSON", "No pairings found in \"" + path + "\".");
+                    return;
+                }
+
+                DisplayProposedPairing(root.pairings[0]);
+
+                // Only the Inspect tab's one pairing slot exists -- showing the first and
+                // saying so beats silently dropping the rest or guessing which one the
+                // user meant.
+                if (root.pairings.Count > 1)
+                    RadMessageBox.Show(this, "\"" + path + "\" contains " + root.pairings.Count + " pairings -- showing the first one only.");
+            }
+            catch (Exception ex)
+            {
+                ShowSelectableMessage("Pairing Load JSON", "Couldn't load \"" + path + "\":" + Environment.NewLine + Environment.NewLine + ex);
+            }
+        }
+
+        private void DisplayProposedPairing(PairingLoadPairing p)
+        {
+            viewingProposedPairing = true;
+
+            txtPairingID.Text = ProposedPairingIdDisplay(p.header.pairing_id);
+            txtPairingDate.NullableValue = InternalDateToNullable(p.header.pairing_id.pairing_date);
+            // Deliberately NOT added to Recent Pairings -- there's no real pairing number
+            // to look up yet, and re-selecting it later would just fail.
+
+            lblStatusValue.Text = "Proposed";
+            lblStatusValue.ForeColor = Color.Blue;
+
+            // Crew Type and Min Day Status don't apply to a pairing with no CrewTrac
+            // record yet -- hidden rather than shown with a placeholder, same reasoning
+            // as the 3 action buttons below.
+            lblCrewTypeTitle.Visible = false;
+            lblCrewTypeValue.Visible = false;
+            lblMinDayStatusTitle.Visible = false;
+            lblMinDayStatusValue.Visible = false;
+            LayoutHeaderLabels();
+
+            // Hidden, not just disabled -- all three act on a real pairing number this
+            // one doesn't have yet, so showing them (even greyed) implies a capability
+            // that doesn't exist here at all. Enabled is also kept false alongside
+            // Visible so viewingProposedPairing's own gating (SetPairingActionButtonsBusy)
+            // stays consistent with what's on screen.
+            btnRecalculateMinDay.Visible = false;
+            btnRecalculateMinDay.Enabled = false;
+            btnEvaluatePairing.Visible = false;
+            btnEvaluatePairing.Enabled = false;
+            btnLaunchCTWPM.Visible = false;
+            btnLaunchCTWPM.Enabled = false;
+
+            // The schema only carries position codes/counts, never named crew -- every
+            // seat shows as open, reusing the same OPEN-row convention a real pairing's
+            // unfilled positions already use (see btnLookUp_Click's openPositionsLookup).
+            List<CrewGridRow> crewGridRows = new List<CrewGridRow>();
+            if (p.header.position != null)
+                foreach (PairingLoadPosition pos in p.header.position)
+                    for (int i = 0; i < pos.count; i++)
+                        crewGridRows.Add(new CrewGridRow { PairingPos = pos.code, EmpNum = 0, LastFirstName = "OPEN", IsOpen = true });
+            crewGrid.DataSource = crewGridRows;
+
+            grid.DataSource = BuildProposedPairingRows(p);
+        }
+
+        // oneOf pairing_number OR pairing_base+pairing_eqpt per the schema -- whichever
+        // was given is the best identifier available before a real number is assigned.
+        private static string ProposedPairingIdDisplay(PairingLoadPairingId id)
+        {
+            return !string.IsNullOrEmpty(id.pairing_number) ? id.pairing_number : (id.pairing_base ?? "") + (id.pairing_eqpt ?? "");
+        }
+
+        private List<InspectRow> BuildProposedPairingRows(PairingLoadPairing p)
+        {
+            var rows = new List<InspectRow>();
+            int totalCredit = 0;
+
+            foreach (PairingLoadDuty duty in p.dutyPeriods)
+            {
+                if (duty.duty_num == 0)
+                    continue; // short ground-time marker, not a real duty -- nothing to show
+
+                int dutyCredit = 0;
+                foreach (PairingLoadLeg leg in duty.legs)
+                {
+                    InspectRow row = new InspectRow
+                    {
+                        DutyPeriod = duty.duty_num.ToString(),
+                        RowKind = "Leg",
+                        Date = FormatMMDD(leg.dept_city_date),
+                        DeptCity = leg.dept_city,
+                        ArrvCity = leg.arrv_city,
+                        DeptTime = FormatHHMMTime(leg.dept_city_time),
+                        ArrvTime = FormatHHMMTime(leg.arrv_city_time)
+                    };
+
+                    switch (leg.type)
+                    {
+                        case 2: // operated flight leg
+                            row.FlightNum = leg.flight_num;
+                            row.Credit = ParseMinutes(leg.credit);
+                            break;
+                        case 4: // deadhead, own metal or OAD
+                            row.FlightNum = leg.flight_num;
+                            row.OA = leg.oad;
+                            row.Deadhead = leg.deadhead_ind;
+                            // A deadhead's credit is optional in the schema -- when
+                            // omitted, the real ingest derives it from GMT-adjusted
+                            // elapsed time, which this preview doesn't replicate.
+                            row.Credit = ParseMinutes(leg.credit);
+                            break;
+                        case 5: // non-flying activity
+                            row.FlightNum = leg.transaction_code;
+                            break;
+                    }
+
+                    dutyCredit += row.Credit;
+                    rows.Add(row);
+                }
+
+                rows.Add(new InspectRow { RowKind = "DividerBeforeDuty" });
+
+                rows.Add(new InspectRow
+                {
+                    RowKind = "Duty",
+                    Credit = dutyCredit,
+                    Report = FormatHHMMTime(duty.start_time),
+                    Release = FormatHHMMTime(duty.end_time) + (duty.end_date != duty.start_date ? "+1" : ""),
+                    DutyTime = FormatHHMM(MinutesBetween(duty.start_date, duty.start_time, duty.end_date, duty.end_time))
+                });
+
+                totalCredit += dutyCredit;
+                rows.Add(new InspectRow { RowKind = "DividerAfterDuty" });
+            }
+
+            rows.Add(new InspectRow { RowKind = "Totals", ArrvTime = "Totals:", Credit = totalCredit });
+            rows.Add(new InspectRow { RowKind = "DividerAfterTotals" });
+            rows.Add(new InspectRow { RowKind = "DividerAfterTotals" });
+
+            PairingLoadHeader hdr = p.header;
+            rows.Add(new InspectRow
+            {
+                RowKind = "TAFB",
+                ArrvTime = "TAFB:",
+                Credit = MinutesBetween(hdr.report_date, hdr.report_time, hdr.skdend_date, hdr.skdend_time)
+            });
+
+            return rows;
+        }
+
+        private static int ParseMinutes(string durationMinutes)
+        {
+            int minutes;
+            return !string.IsNullOrEmpty(durationMinutes) && int.TryParse(durationMinutes, out minutes) ? minutes : 0;
+        }
+
+        // JSON times are "HHMM" (schema's timeHHMM) -- AsDisplayTime elsewhere in this
+        // form renders the same "HH:mm" shape, so this mirrors it for the JSON path.
+        private static string FormatHHMMTime(string hhmm)
+        {
+            return !string.IsNullOrEmpty(hhmm) && hhmm.Length == 4 ? hhmm.Substring(0, 2) + ":" + hhmm.Substring(2, 2) : hhmm;
+        }
+
+        private static int MinutesBetween(string fromDate, string fromTime, string toDate, string toTime)
+        {
+            DateTime from, to;
+            if (!DateTime.TryParseExact(fromDate + fromTime, "yyyyMMddHHmm", null, System.Globalization.DateTimeStyles.None, out from) ||
+                !DateTime.TryParseExact(toDate + toTime, "yyyyMMddHHmm", null, System.Globalization.DateTimeStyles.None, out to))
+                return 0;
+            return (int)(to - from).TotalMinutes;
+        }
+
         private void SetupCrewGrid()
         {
             crewGrid = new RadGridView();
@@ -1297,8 +1895,26 @@ namespace PairingInspect2
             crewGrid.Columns.Add(new GridViewTextBoxColumn("AssignCode", "AssignCode") { HeaderText = "Assign Code", TextAlignment = ContentAlignment.MiddleCenter, Width = 91 });
             crewGrid.Columns.Add(new GridViewTextBoxColumn("PairingLineType", "PairingLineType") { HeaderText = "Line Type", TextAlignment = ContentAlignment.MiddleCenter, Width = 53 }); // 20px narrower than its resized width, leaving just enough room for the vertical scrollbar without triggering a horizontal one
             crewGrid.CellDoubleClick += CrewGrid_CellDoubleClick;
+            crewGrid.ViewCellFormatting += CrewGrid_ViewCellFormatting;
 
             pnlCrewGrid.Controls.Add(crewGrid);
+        }
+
+        // Flags Emp #/Name in red for crew pulled from btnLookUp_Click's cancelled-pairing
+        // fallback (IsCanceledCrew) -- same visual language as the Inspect grid's
+        // canceled-leg highlighting, so it's clear at a glance this isn't a normal,
+        // currently-active crew assignment.
+        private void CrewGrid_ViewCellFormatting(object sender, CellFormattingEventArgs e)
+        {
+            if (e.Row == null || !(e.Row.DataBoundItem is CrewGridRow) || e.Column == null)
+                return;
+
+            CrewGridRow row = (CrewGridRow)e.Row.DataBoundItem;
+            bool isEmpOrNameColumn = e.Column.Name == "EmpNum" || e.Column.Name == "LastFirstName";
+            if (isEmpOrNameColumn && row.IsCanceledCrew)
+                e.CellElement.ForeColor = Color.Red;
+            else
+                e.CellElement.ResetValue(LightVisualElement.ForeColorProperty, ValueResetFlags.Local);
         }
 
         // Same double-click-to-launch-CTWMS behavior as the exceptions grid's crew
@@ -1325,6 +1941,11 @@ namespace PairingInspect2
             public string AssignCode { get; set; }
             public string PairingLineType { get; set; }
             public bool IsOpen { get; set; }
+            // Set only for the cancelled-pairing fallback crew (btnLookUp_Click's
+            // FillAllCrewOnPairing path) -- this is crew pulled from an inactive ('I')
+            // MP record, not a normal active assignment, so it's flagged red rather than
+            // shown identically to a real, currently-active crew member.
+            public bool IsCanceledCrew { get; set; }
         }
 
         private void SetupGrid()
@@ -1845,6 +2466,16 @@ namespace PairingInspect2
                 else
                     e.CellElement.ResetValue(LightVisualElement.FontProperty, ValueResetFlags.Local);
 
+                // Canceled (FH.Status == "I") flight legs -- flag the flight#/org/dst/
+                // dept/arrv cells in red so a canceled flight within an otherwise-active
+                // pairing stands out at a glance.
+                bool isOrgDstDeptArrvColumn = e.Column != null &&
+                    (e.Column.Name == "FlightNum" || e.Column.Name == "DeptCity" || e.Column.Name == "ArrvCity" || e.Column.Name == "DeptTime" || e.Column.Name == "ArrvTime");
+                if (isOrgDstDeptArrvColumn && row.RowKind == "Leg" && row.IsCanceledLeg)
+                    e.CellElement.ForeColor = Color.Red;
+                else
+                    e.CellElement.ResetValue(LightVisualElement.ForeColorProperty, ValueResetFlags.Local);
+
                 bool isNoteColumn = e.Column != null && e.Column.Name == "Note";
                 if (isNoteColumn && !string.IsNullOrEmpty(row.Note))
                 {
@@ -1931,6 +2562,12 @@ namespace PairingInspect2
             public string ArrvTime { get; set; }
             public bool DeptTimeIsActual { get; set; }
             public bool ArrvTimeIsActual { get; set; }
+            // Only ever set for AirlinePairingLeg rows (FlightStatus == "I", i.e. FH.Status
+            // -- the flight's own real-world operational status, confirmed via
+            // Z:\Hugo\CT Source\h\ctFILES.h's "FLIGHT LEG HEADER RECORD"). Non-flying and
+            // other-airline-deadhead legs have no FH-backed status at all and never set
+            // this -- it stays false (the type's own default) for them.
+            public bool IsCanceledLeg { get; set; }
             public string OA { get; set; }
             public string Deadhead { get; set; }
             public int Credit { get; set; }

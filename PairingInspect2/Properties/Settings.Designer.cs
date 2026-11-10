@@ -133,14 +133,5 @@ namespace PairingInspect2.Properties
             get { return ((bool)(this["SettingsUpgraded"])); }
             set { this["SettingsUpgraded"] = value; }
         }
-
-        [global::System.Configuration.UserScopedSettingAttribute()]
-        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("Print")]
-        public string LastPrintAction
-        {
-            get { return ((string)(this["LastPrintAction"])); }
-            set { this["LastPrintAction"] = value; }
-        }
     }
 }

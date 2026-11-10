@@ -54,6 +54,7 @@
     <Reference Include="System.Data" />
     <Reference Include="System.Deployment" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml" />
     <Reference Include="Telerik.WinControls, Version=2023.3.1114.40, Culture=neutral, PublicKeyToken=5bb2a467cbec794e, processorArchitecture=MSIL">
@@ -86,6 +87,7 @@
       <DependentUpon>RadForm1.cs</DependentUpon>
     </EmbeddedResource>
     <Compile Include="Program.cs" />
+    <Compile Include="PairingLoadJson.cs" />
     <Compile Include="MinDayNameResolver.cs" />
     <Compile Include="MinDayDiffCalculator.cs" />
     <Compile Include="CtwpmSelectionAutomator.cs" />

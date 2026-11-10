@@ -44,7 +44,6 @@ namespace PairingInspect2
             this.btnRecalculateMinDay = new Telerik.WinControls.UI.RadButton();
             this.btnLaunchCTWPM = new Telerik.WinControls.UI.RadDropDownButton();
             this.btnPrintPairing = new Telerik.WinControls.UI.RadDropDownButton();
-            this.lblOutput = new System.Windows.Forms.Label();
             this.lblStatusTitle = new System.Windows.Forms.Label();
             this.lblStatusValue = new System.Windows.Forms.Label();
             this.lblCrewTypeTitle = new System.Windows.Forms.Label();
@@ -144,7 +143,6 @@ namespace PairingInspect2
             this.tabPageInspect.Controls.Add(this.btnRecalculateMinDay);
             this.tabPageInspect.Controls.Add(this.btnLaunchCTWPM);
             this.tabPageInspect.Controls.Add(this.btnPrintPairing);
-            this.tabPageInspect.Controls.Add(this.lblOutput);
             this.tabPageInspect.Controls.Add(this.lblStatusTitle);
             this.tabPageInspect.Controls.Add(this.lblStatusValue);
             this.tabPageInspect.Controls.Add(this.lblCrewTypeTitle);
@@ -200,19 +198,9 @@ namespace PairingInspect2
             this.btnPrintPairing.Name = "btnPrintPairing";
             this.btnPrintPairing.Size = new System.Drawing.Size(90, 22);
             this.btnPrintPairing.TabIndex = 18;
-            this.btnPrintPairing.Text = "Print";
+            this.btnPrintPairing.Text = "Output";
             this.btnPrintPairing.ThemeName = "ControlDefault";
             this.btnPrintPairing.Click += new System.EventHandler(this.btnPrintPairing_Click);
-            //
-            // lblOutput
-            //
-            this.lblOutput.AutoSize = true;
-            this.lblOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
-            this.lblOutput.Location = new System.Drawing.Point(1010, 236);
-            this.lblOutput.Name = "lblOutput";
-            this.lblOutput.Size = new System.Drawing.Size(55, 17);
-            this.lblOutput.TabIndex = 26;
-            this.lblOutput.Text = "Output:";
             //
             // lblStatusTitle
             // 
@@ -494,7 +482,6 @@ namespace PairingInspect2
         private Telerik.WinControls.UI.RadButton btnEvaluatePairing;
         private Telerik.WinControls.UI.RadDropDownButton btnLaunchCTWPM;
         private Telerik.WinControls.UI.RadDropDownButton btnPrintPairing;
-        private System.Windows.Forms.Label lblOutput;
         private System.Windows.Forms.MenuStrip menuStrip1;
         private System.Windows.Forms.ToolStripMenuItem fileToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem connectionInfoToolStripMenuItem;

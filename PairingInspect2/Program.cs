@@ -11,7 +11,7 @@ namespace PairingInspect2
         /// The main entry point for the application.
         /// </summary>
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             // No handler existed at all before this -- confirmed live: looking up a
             // cancelled pairing closed the whole app with no error dialog whatsoever,
@@ -34,7 +34,7 @@ namespace PairingInspect2
             Application.SetCompatibleTextRenderingDefault(false);
             if (!SFIConfigUtils.RunCheck.OkToRun())
                 return;
-            Application.Run(new RadForm1());
+            Application.Run(new RadForm1(args));
         }
 
         private static void LogCrash(string source, Exception ex, object rawObject)

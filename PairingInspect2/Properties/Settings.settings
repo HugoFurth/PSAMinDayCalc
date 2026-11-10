@@ -40,8 +40,5 @@
     <Setting Name="SettingsUpgraded" Type="System.Boolean" Scope="User">
       <Value Profile="(Default)">False</Value>
     </Setting>
-    <Setting Name="LastPrintAction" Type="System.String" Scope="User">
-      <Value Profile="(Default)">Print</Value>
-    </Setting>
   </Settings>
 </SettingsFile>
