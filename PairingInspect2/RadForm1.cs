@@ -33,6 +33,7 @@ namespace PairingInspect2
         List<string> minDayCriticalMessages;
         RadGridView grid;
         RadGridView crewGrid;
+        RadGridView pxGrid;
         RadGridView exceptionsGrid;
         MinDayProcess minDayProcess;
         ContextMenuStrip ctwpmFunctionMenu;
@@ -40,6 +41,11 @@ namespace PairingInspect2
         ContextMenuStrip exceptionsPairingMenu;
         ContextMenuStrip printFunctionMenu;
         PXExceptionRow exceptionsContextRow; // row the exceptions grid's PairingID right-click menu is currently acting on
+        // The Report_Date/Report_Time of the PX row last clicked in pxGrid, when it was
+        // Critical -- drives grid_ViewCellFormatting's red highlight on the matching duty's
+        // Report cell in the main pairing grid. Null/cleared means no highlight is active.
+        string highlightedReportDate;
+        int highlightedReportTimeMins;
         Dictionary<string, string> recentPairingLookup; // displayed "PairingID MM/DD" -> full stored "PairingID InternalDate" entry
         // Full stored "PairingID InternalDate" entry -> the color it should show as in the
         // Recent Pairings box (currently only ever Red, for a Canceled pairing). Session-
@@ -104,6 +110,7 @@ namespace PairingInspect2
             minDayCriticalMessages = new List<string>();
 
             SetupCrewGrid();
+            SetupPxGrid();
             SetupGrid();
             SetupExceptionsGrid();
             txtExceptionsFromDate.Leave += txtExceptionsFromDate_Leave;
@@ -1079,6 +1086,8 @@ namespace PairingInspect2
                     btnLaunchCTWPM.Enabled = true;
 
                     crewGrid.DataSource = null;
+                    pxGrid.DataSource = null;
+                    highlightedReportDate = null;
                     grid.DataSource = null;
                     lblStatusValue.Text = "";
                     lblStatusValue.ForeColor = SystemColors.ControlText;
@@ -1117,8 +1126,6 @@ namespace PairingInspect2
                     isCanceledCrewFallback = true;
                     }
 
-                openPositionsLookup.FillByPairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
-
                 List<CrewGridRow> crewGridRows = new List<CrewGridRow>();
                 foreach (CrewMemOnPairing c in crewOnPairing)
                     crewGridRows.Add(new CrewGridRow
@@ -1131,11 +1138,43 @@ namespace PairingInspect2
                         IsOpen = false,
                         IsCanceledCrew = isCanceledCrewFallback
                     });
-                foreach (OTPM o in openPositionsLookup.List)
-                    for (int i = 0; i < o.OpenCount; i++)
-                        crewGridRows.Add(new CrewGridRow { PairingPos = o.Pos, EmpNum = 0, LastFirstName = "OPEN", IsOpen = true });
+
+                if (isCanceledCrewFallback)
+                    {
+                    // OT (open-time) reflects live open seats for an ACTIVE pairing, but
+                    // cancelling flips it right alongside MP -- it can't tell us what was
+                    // open AT THE MOMENT OF CANCELLATION any more than mp.status='A' could
+                    // tell us who was crewing it. Same fix CrewRec's Repair tab uses for
+                    // its own "formerly open seats" display: built-for (PM.Position_0..)
+                    // minus the matched-at-cancellation filled count, per position, is
+                    // what was still open when the pairing was cancelled.
+                    Dictionary<string, int> filledByPos = new Dictionary<string, int>();
+                    foreach (CrewMemOnPairing c in crewOnPairing)
+                        {
+                        int n;
+                        filledByPos.TryGetValue(c.PairingPos, out n);
+                        filledByPos[c.PairingPos] = n + 1;
+                        }
+
+                    for (int i = 0; i < crewPosOrder.Length && i < prg.PrgHdr.Positions.Length; i++)
+                        {
+                        int filled;
+                        filledByPos.TryGetValue(crewPosOrder[i], out filled);
+                        int open = prg.PrgHdr.Positions[i] - filled;
+                        for (int j = 0; j < open; j++)
+                            crewGridRows.Add(new CrewGridRow { PairingPos = crewPosOrder[i], EmpNum = 0, LastFirstName = "OPEN", IsOpen = true, IsCanceledCrew = true });
+                        }
+                    }
+                else
+                    {
+                    openPositionsLookup.FillByPairing(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
+                    foreach (OTPM o in openPositionsLookup.List)
+                        for (int i = 0; i < o.OpenCount; i++)
+                            crewGridRows.Add(new CrewGridRow { PairingPos = o.Pos, EmpNum = 0, LastFirstName = "OPEN", IsOpen = true });
+                    }
 
                 crewGrid.DataSource = crewGridRows;
+                LoadPxGrid(prg.PrgHdr.PrgID, prg.PrgHdr.PrgDate);
 
                 MinDayMarkerStatus minDayMarkerStatus = MinDayNameResolver.Resolve(prg.PrgHdr.UpdateidUpdempno);
                 DisplayHeader(minDayMarkerStatus);
@@ -1259,8 +1298,10 @@ namespace PairingInspect2
             RegisterPairingDropTarget(tabPageInspect);
             RegisterPairingDropTarget(pnlGrid);
             RegisterPairingDropTarget(pnlCrewGrid);
+            RegisterPairingDropTarget(pnlPxGrid);
             RegisterPairingDropTarget(grid);
             RegisterPairingDropTarget(crewGrid);
+            RegisterPairingDropTarget(pxGrid);
         }
 
         private void RegisterPairingDropTarget(Control c)
@@ -1613,6 +1654,8 @@ namespace PairingInspect2
                     Credit = duty.ActCredit,
                     CreditDeltaAmount = minDay.Credit,
                     Report = duty.Report.AsDisplayTime,
+                    ReportDateInternal = duty.Report.AsCTDate,
+                    ReportTimeMins = duty.Report.TimeAsMins,
                     Release = FormatReleaseTime(duty.Report, duty.ActEnd),
                     DutyTime = FormatHHMM(duty.ActOnDuty),
                     Note = minDay.HasMinDay ? "Min Day" : ""
@@ -1765,6 +1808,8 @@ namespace PairingInspect2
                     for (int i = 0; i < pos.count; i++)
                         crewGridRows.Add(new CrewGridRow { PairingPos = pos.code, EmpNum = 0, LastFirstName = "OPEN", IsOpen = true });
             crewGrid.DataSource = crewGridRows;
+            pxGrid.DataSource = null; // no real pairing number to look up PX records for yet
+            highlightedReportDate = null;
 
             grid.DataSource = BuildProposedPairingRows(p);
         }
@@ -1917,6 +1962,182 @@ namespace PairingInspect2
                 e.CellElement.ResetValue(LightVisualElement.ForeColorProperty, ValueResetFlags.Local);
         }
 
+        public class PxGridRow
+            {
+            public short ErrorNo { get; set; }
+            // Raw indicator (C/O/W/H/D/I, per ctFILES.h's PX struct comment) drives the
+            // row coloring in PxGrid_ViewCellFormatting; Severity is just its display text.
+            public string SeverityInd { get; set; }
+            public string Severity { get; set; }
+            public string Report { get; set; }
+            public string Description { get; set; }
+            // Raw (unformatted) Report_Date/Report_Time -- kept alongside the display
+            // string Report so PxGrid_CellClick can match a clicked critical row against
+            // an InspectRow's own ReportDateInternal/ReportTimeMins exactly, rather than
+            // re-parsing the formatted "MM/DD/YY HH:MM" text.
+            public string ReportDateRaw { get; set; }
+            public int ReportTimeMins { get; set; }
+            }
+
+        private void SetupPxGrid()
+        {
+            pxGrid = new RadGridView();
+            pxGrid.ThemeName = "ControlDefault";
+            pxGrid.Dock = DockStyle.Fill;
+            pxGrid.ShowGroupPanel = false;
+            pxGrid.EnableSorting = false;
+            pxGrid.MasterTemplate.AutoGenerateColumns = false;
+            pxGrid.MasterTemplate.AllowAddNewRow = false;
+            pxGrid.MasterTemplate.AllowDeleteRow = false;
+            pxGrid.MasterTemplate.ShowRowHeaderColumn = false;
+            pxGrid.AllowColumnReorder = false;
+            pxGrid.ReadOnly = true;
+            pxGrid.Columns.Add(new GridViewTextBoxColumn("ErrorNo", "ErrorNo") { HeaderText = "Exc #", TextAlignment = ContentAlignment.MiddleCenter, Width = 50 });
+            pxGrid.Columns.Add(new GridViewTextBoxColumn("Severity", "Severity") { HeaderText = "Severity", TextAlignment = ContentAlignment.MiddleCenter, Width = 85 });
+            pxGrid.Columns.Add(new GridViewTextBoxColumn("Report", "Report") { HeaderText = "Report Date", TextAlignment = ContentAlignment.MiddleCenter, Width = 110 });
+            pxGrid.Columns.Add(new GridViewTextBoxColumn("Description", "Description") { HeaderText = "Description", TextAlignment = ContentAlignment.MiddleLeft, MinWidth = 188 });
+            pxGrid.ViewCellFormatting += PxGrid_ViewCellFormatting;
+            pxGrid.CellClick += PxGrid_CellClick;
+
+            pnlPxGrid.Controls.Add(pxGrid);
+        }
+
+        // Same severity letters MX uses (ctFILES.h): C=Critical O=Override W=Warning
+        // H=History D=Dequal I=Informational.
+        private static string PxSeverityDisplay(string severityInd)
+        {
+            switch (severityInd)
+            {
+                case "C": return "Critical";
+                case "O": return "Override";
+                case "W": return "Warning";
+                case "H": return "History";
+                case "D": return "Dequal";
+                case "I": return "Informational";
+                default: return severityInd;
+            }
+        }
+
+        // Critical/Warning get the same at-a-glance coloring as other problem indicators
+        // in this app -- History (superseded by a later version of this pairing, see the
+        // comment in btnFindExceptions_Click) is greyed out rather than colored, since
+        // it's not a live issue with the pairing as it stands now.
+        private void PxGrid_ViewCellFormatting(object sender, CellFormattingEventArgs e)
+        {
+            if (e.Row == null || !(e.Row.DataBoundItem is PxGridRow) || e.Column == null)
+                return;
+
+            PxGridRow row = (PxGridRow)e.Row.DataBoundItem;
+            switch (row.SeverityInd)
+            {
+                case "C":
+                    e.CellElement.ForeColor = Color.Red;
+                    break;
+                case "W":
+                    e.CellElement.ForeColor = Color.DarkOrange;
+                    break;
+                case "H":
+                    e.CellElement.ForeColor = Color.Gray;
+                    break;
+                default:
+                    e.CellElement.ResetValue(LightVisualElement.ForeColorProperty, ValueResetFlags.Local);
+                    break;
+            }
+        }
+
+        // Clicking a Critical PX row highlights its duty's Report time in the main
+        // pairing grid (grid_ViewCellFormatting), so the exception's location in the
+        // pairing is visible at a glance -- clicking anything else (a non-Critical row,
+        // or empty grid space) clears whatever highlight was showing. Clicking the SAME
+        // already-highlighted row a second time toggles it off instead of just
+        // reapplying the identical highlight.
+        private void PxGrid_CellClick(object sender, GridViewCellEventArgs e)
+        {
+            PxGridRow row = e.Row != null ? e.Row.DataBoundItem as PxGridRow : null;
+            bool alreadyHighlightedSameRow = row != null && highlightedReportDate != null &&
+                row.ReportDateRaw == highlightedReportDate && row.ReportTimeMins == highlightedReportTimeMins;
+
+            if (row != null && row.SeverityInd == "C" && !alreadyHighlightedSameRow)
+            {
+                highlightedReportDate = row.ReportDateRaw;
+                highlightedReportTimeMins = row.ReportTimeMins;
+            }
+            else
+            {
+                highlightedReportDate = null;
+            }
+
+            InvalidateAllGridRows();
+        }
+
+        // Clicking anywhere in the main pairing grid clears whatever PX highlight is
+        // showing -- the user has moved on to looking at the grid itself, not the
+        // exception that pointed them at it.
+        private void Grid_CellClick(object sender, GridViewCellEventArgs e)
+        {
+            if (highlightedReportDate == null)
+                return;
+
+            highlightedReportDate = null;
+            InvalidateAllGridRows();
+        }
+
+        // A plain Invalidate()/Refresh() only repaints already-realized cell elements
+        // with whatever color they last had -- it does NOT re-run ViewCellFormatting.
+        // GridViewRowInfo.InvalidateRow() is the documented, targeted way to force a
+        // row's visual state (and therefore its cells' formatting) to actually
+        // re-evaluate.
+        private void InvalidateAllGridRows()
+        {
+            foreach (GridViewRowInfo rowInfo in grid.Rows)
+                rowInfo.InvalidateRow();
+        }
+
+        // All PX records for the pairing currently loaded on the Inspect tab -- PX has no
+        // Cancel field of its own and a row is never deleted, only flagged History on
+        // supersession (see btnFindExceptions_Click's comment), so a cancelled or
+        // superseded pairing can still show old rows here; that's intentional context,
+        // not a bug, and History rows are visually greyed rather than hidden.
+        private void LoadPxGrid(string prgNum, string prgDate)
+        {
+            highlightedReportDate = null; // a fresh pairing's duties have nothing to do with any prior highlight
+            List<PxGridRow> rows = new List<PxGridRow>();
+            using (OleDbCommand cmd = prg.Connection.CreateCommand())
+            {
+                cmd.CommandText =
+                    "SELECT px.ErrorNo_0, px.SeverityInd, px.Report_Date, px.Report_Time, er.Data " +
+                    "FROM PX px LEFT JOIN ER er ON er.Number = px.ErrorNo_0 " +
+                    "WHERE px.Prgid_Prgno_Base = ? AND px.Prgid_Prgno_Eqpt = ? AND px.Prgid_Prgno_3 = ? AND px.Prgid_Prgno_4_6 = ? AND px.Prgid_Prgdate = ? " +
+                    "ORDER BY px.ErrorNo_0";
+                int len = prgNum.Length;
+                cmd.Parameters.AddWithValue("Base", prgNum.Substring(0, 1));
+                cmd.Parameters.AddWithValue("Eqpt", prgNum.Substring(1, 1));
+                cmd.Parameters.AddWithValue("P3", prgNum.Substring(2, 1));
+                cmd.Parameters.AddWithValue("P4_6", prgNum.Substring(3, len - 3));
+                cmd.Parameters.AddWithValue("PrgDate", prgDate);
+                using (OleDbDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        string severityInd = reader["SeverityInd"].ToString().Trim();
+                        string reportDateRaw = reader["Report_Date"].ToString();
+                        int reportTimeMins = Convert.ToInt32(reader["Report_Time"]);
+                        rows.Add(new PxGridRow
+                        {
+                            ErrorNo = Convert.ToInt16(reader["ErrorNo_0"]),
+                            SeverityInd = severityInd,
+                            Severity = PxSeverityDisplay(severityInd),
+                            Report = PairingDateToDisplay(reportDateRaw) + " " + CTTimeFormat.MinsAsHHMM(reportTimeMins).Trim(),
+                            Description = reader["Data"] == DBNull.Value ? "" : reader["Data"].ToString().Trim(),
+                            ReportDateRaw = reportDateRaw,
+                            ReportTimeMins = reportTimeMins
+                        });
+                    }
+                }
+            }
+            pxGrid.DataSource = rows;
+        }
+
         // Same double-click-to-launch-CTWMS behavior as the exceptions grid's crew
         // columns (ExceptionsGrid_CellClick) -- here every row is one crew member
         // already (no Crew1/Crew2/Crew3 column ambiguity), and every row belongs to
@@ -2004,6 +2225,7 @@ namespace PairingInspect2
             grid.ViewCellFormatting += grid_ViewCellFormatting;
             grid.ViewRowFormatting += grid_ViewRowFormatting;
             grid.PrintCellFormatting += grid_PrintCellFormatting;
+            grid.CellClick += Grid_CellClick;
 
             // A layout saved before a column was added/renamed/reordered will silently
             // override the current setup (header text, order, visibility) when loaded --
@@ -2440,6 +2662,12 @@ namespace PairingInspect2
                 bool isCreditColumn = e.Column != null && (e.Column.Name == "Credit" || e.Column.Name == "CreditHHMM");
                 bool isDutySummaryColumn = e.Column != null && (e.Column.Name == "Report" || e.Column.Name == "Release" || e.Column.Name == "DutyTime");
 
+                // Clicking a Critical PX row (PxGrid_CellClick) highlights the matching
+                // duty's own Report cell in red text -- see the ForeColor block below.
+                bool isReportColumn = e.Column != null && e.Column.Name == "Report";
+                bool isHighlightedDutyReport = isReportColumn && row.RowKind == "Duty" && highlightedReportDate != null &&
+                    row.ReportDateInternal == highlightedReportDate && row.ReportTimeMins == highlightedReportTimeMins;
+
                 if (row.RowKind == "DividerBeforeDuty" || row.RowKind == "DividerAfterDuty" || row.RowKind == "DividerAfterTotals")
                 {
                     Color creditColor = row.RowKind == "DividerBeforeDuty" ? Color.LightGray : Color.Black;
@@ -2471,7 +2699,7 @@ namespace PairingInspect2
                 // pairing stands out at a glance.
                 bool isOrgDstDeptArrvColumn = e.Column != null &&
                     (e.Column.Name == "FlightNum" || e.Column.Name == "DeptCity" || e.Column.Name == "ArrvCity" || e.Column.Name == "DeptTime" || e.Column.Name == "ArrvTime");
-                if (isOrgDstDeptArrvColumn && row.RowKind == "Leg" && row.IsCanceledLeg)
+                if ((isOrgDstDeptArrvColumn && row.RowKind == "Leg" && row.IsCanceledLeg) || isHighlightedDutyReport)
                     e.CellElement.ForeColor = Color.Red;
                 else
                     e.CellElement.ResetValue(LightVisualElement.ForeColorProperty, ValueResetFlags.Local);
@@ -2624,6 +2852,12 @@ namespace PairingInspect2
             }
 
             public string Report { get; set; }
+            // Raw (unformatted) Report date/time alongside the display string Report --
+            // only populated for RowKind=="Duty" on a real (non-proposed) pairing, so
+            // grid_ViewCellFormatting can match it exactly against a clicked PX row's own
+            // ReportDateRaw/ReportTimeMins (see PxGrid_CellClick).
+            public string ReportDateInternal { get; set; }
+            public int ReportTimeMins { get; set; }
             public string Release { get; set; }
             public string DutyTime { get; set; }
             public string Note { get; set; }

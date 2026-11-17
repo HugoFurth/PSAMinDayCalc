@@ -39,6 +39,7 @@ namespace PairingInspect2
             this.tabPageInspect = new Telerik.WinControls.UI.RadPageViewPage();
             this.pnlGrid = new System.Windows.Forms.Panel();
             this.pnlCrewGrid = new System.Windows.Forms.Panel();
+            this.pnlPxGrid = new System.Windows.Forms.Panel();
             this.pnlExceptionsGrid = new System.Windows.Forms.Panel();
             this.btnEvaluatePairing = new Telerik.WinControls.UI.RadButton();
             this.btnRecalculateMinDay = new Telerik.WinControls.UI.RadButton();
@@ -138,6 +139,7 @@ namespace PairingInspect2
             // tabPageInspect
             // 
             this.tabPageInspect.Controls.Add(this.pnlCrewGrid);
+            this.tabPageInspect.Controls.Add(this.pnlPxGrid);
             this.tabPageInspect.Controls.Add(this.pnlGrid);
             this.tabPageInspect.Controls.Add(this.btnEvaluatePairing);
             this.tabPageInspect.Controls.Add(this.btnRecalculateMinDay);
@@ -406,7 +408,14 @@ namespace PairingInspect2
             this.pnlCrewGrid.Name = "pnlCrewGrid";
             this.pnlCrewGrid.Size = new System.Drawing.Size(450, 100);
             this.pnlCrewGrid.TabIndex = 25;
-            // 
+            //
+            // pnlPxGrid
+            //
+            this.pnlPxGrid.Location = new System.Drawing.Point(490, 151);
+            this.pnlPxGrid.Name = "pnlPxGrid";
+            this.pnlPxGrid.Size = new System.Drawing.Size(570, 100);
+            this.pnlPxGrid.TabIndex = 26;
+            //
             // pnlGrid
             // 
             this.pnlGrid.Location = new System.Drawing.Point(20, 261);
@@ -494,6 +503,7 @@ namespace PairingInspect2
         private Telerik.WinControls.UI.RadButton btnFindExceptions;
         private System.Windows.Forms.Panel pnlGrid;
         private System.Windows.Forms.Panel pnlCrewGrid;
+        private System.Windows.Forms.Panel pnlPxGrid;
         private System.Windows.Forms.Panel pnlExceptionsGrid;
     }
 }
