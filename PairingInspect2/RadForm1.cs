@@ -184,6 +184,11 @@ namespace PairingInspect2
             try
             {
                 cboVersion.Items.Clear();
+                // Items.Clear() doesn't touch this -- it's a property on the editable
+                // area element itself, not tied to the item collection, so a stale red
+                // from the previous lookup's canceled selection would otherwise bleed
+                // into an empty/new box.
+                cboVersion.DropDownListElement.EditableElement.ResetValue(LightVisualElement.ForeColorProperty, ValueResetFlags.Local);
                 versionListBase = "";
                 string id = (prgID ?? "").Trim().ToUpperInvariant();
                 if (id.Length < 5 || string.IsNullOrEmpty(internalDate))
@@ -221,7 +226,16 @@ namespace PairingInspect2
                     if (v.Value) item.ForeColor = Color.Red;
                     cboVersion.Items.Add(item);
                     if (v.Key == wanted)
+                    {
                         cboVersion.SelectedItem = item;
+                        // The item's own ForeColor only colors it inside the dropdown
+                        // popup -- the closed box shows the editable area element's own
+                        // ForeColor instead, which doesn't inherit from the selected item.
+                        if (v.Value)
+                            cboVersion.DropDownListElement.EditableElement.ForeColor = Color.Red;
+                        else
+                            cboVersion.DropDownListElement.EditableElement.ResetValue(LightVisualElement.ForeColorProperty, ValueResetFlags.Local);
+                    }
                 }
             }
             catch (Exception ex)
