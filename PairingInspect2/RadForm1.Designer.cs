@@ -53,6 +53,8 @@ namespace PairingInspect2
             this.lblMinDayStatusValue = new System.Windows.Forms.Label();
             this.lblRecentPairings = new System.Windows.Forms.Label();
             this.cboRecentPairings = new Telerik.WinControls.UI.RadDropDownList();
+            this.lblVersion = new System.Windows.Forms.Label();
+            this.cboVersion = new Telerik.WinControls.UI.RadDropDownList();
             this.btnLookUp = new Telerik.WinControls.UI.RadButton();
             this.lblPairingDate = new System.Windows.Forms.Label();
             this.txtPairingDate = new Telerik.WinControls.UI.RadDateTimePicker();
@@ -72,6 +74,7 @@ namespace PairingInspect2
             ((System.ComponentModel.ISupportInitialize)(this.btnPrintPairing)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnLaunchCTWPM)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.cboRecentPairings)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.cboVersion)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnLookUp)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.txtPairingDate)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.txtPairingID)).BeginInit();
@@ -158,6 +161,8 @@ namespace PairingInspect2
             this.tabPageInspect.Controls.Add(this.txtPairingDate);
             this.tabPageInspect.Controls.Add(this.lblPairingID);
             this.tabPageInspect.Controls.Add(this.txtPairingID);
+            this.tabPageInspect.Controls.Add(this.lblVersion);
+            this.tabPageInspect.Controls.Add(this.cboVersion);
             this.tabPageInspect.ItemSize = new System.Drawing.SizeF(64F, 30F);
             this.tabPageInspect.Location = new System.Drawing.Point(12, 40);
             this.tabPageInspect.Name = "tabPageInspect";
@@ -264,7 +269,7 @@ namespace PairingInspect2
             // lblRecentPairings
             // 
             this.lblRecentPairings.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
-            this.lblRecentPairings.Location = new System.Drawing.Point(330, 32);
+            this.lblRecentPairings.Location = new System.Drawing.Point(375, 32);
             this.lblRecentPairings.Name = "lblRecentPairings";
             this.lblRecentPairings.Size = new System.Drawing.Size(300, 17);
             this.lblRecentPairings.TabIndex = 8;
@@ -273,7 +278,8 @@ namespace PairingInspect2
             // cboRecentPairings
             // 
             this.cboRecentPairings.DropDownAnimationEnabled = true;
-            this.cboRecentPairings.Location = new System.Drawing.Point(330, 49);
+            this.cboRecentPairings.DropDownStyle = Telerik.WinControls.RadDropDownStyle.DropDownList;
+            this.cboRecentPairings.Location = new System.Drawing.Point(375, 49);
             this.cboRecentPairings.Name = "cboRecentPairings";
             this.cboRecentPairings.Size = new System.Drawing.Size(150, 20);
             this.cboRecentPairings.TabIndex = 5;
@@ -282,7 +288,7 @@ namespace PairingInspect2
             // 
             // btnLookUp
             // 
-            this.btnLookUp.Location = new System.Drawing.Point(210, 48);
+            this.btnLookUp.Location = new System.Drawing.Point(255, 48);
             this.btnLookUp.Name = "btnLookUp";
             this.btnLookUp.Size = new System.Drawing.Size(100, 24);
             this.btnLookUp.TabIndex = 2;
@@ -293,7 +299,7 @@ namespace PairingInspect2
             // lblPairingDate
             // 
             this.lblPairingDate.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
-            this.lblPairingDate.Location = new System.Drawing.Point(115, 32);
+            this.lblPairingDate.Location = new System.Drawing.Point(160, 32);
             this.lblPairingDate.Name = "lblPairingDate";
             this.lblPairingDate.Size = new System.Drawing.Size(75, 17);
             this.lblPairingDate.TabIndex = 7;
@@ -304,7 +310,7 @@ namespace PairingInspect2
             this.txtPairingDate.CustomFormat = "MM/dd/yy";
             this.txtPairingDate.Format = System.Windows.Forms.DateTimePickerFormat.Custom;
             this.txtPairingDate.NullText = "";
-            this.txtPairingDate.Location = new System.Drawing.Point(115, 50);
+            this.txtPairingDate.Location = new System.Drawing.Point(160, 50);
             this.txtPairingDate.Name = "txtPairingDate";
             this.txtPairingDate.Size = new System.Drawing.Size(75, 20);
             this.txtPairingDate.TabIndex = 1;
@@ -330,6 +336,26 @@ namespace PairingInspect2
             this.txtPairingID.Size = new System.Drawing.Size(75, 20);
             this.txtPairingID.TabIndex = 0;
             this.txtPairingID.ThemeName = "ControlDefault";
+            //
+            // lblVersion
+            //
+            this.lblVersion.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F);
+            this.lblVersion.Location = new System.Drawing.Point(105, 32);
+            this.lblVersion.Name = "lblVersion";
+            this.lblVersion.Size = new System.Drawing.Size(45, 17);
+            this.lblVersion.TabIndex = 19;
+            this.lblVersion.Text = "Ver:";
+            //
+            // cboVersion
+            //
+            this.cboVersion.DropDownStyle = Telerik.WinControls.RadDropDownStyle.DropDownList;
+            this.cboVersion.Location = new System.Drawing.Point(105, 50);
+            this.cboVersion.Name = "cboVersion";
+            this.cboVersion.Size = new System.Drawing.Size(45, 20);
+            this.cboVersion.TabIndex = 20;
+            this.cboVersion.TabStop = false;
+            this.cboVersion.ThemeName = "ControlDefault";
+            this.cboVersion.SelectedIndexChanged += new Telerik.WinControls.UI.Data.PositionChangedEventHandler(this.cboVersion_SelectedIndexChanged);
             // 
             // tabPageMinDayExceptions
             // 
@@ -455,6 +481,7 @@ namespace PairingInspect2
             ((System.ComponentModel.ISupportInitialize)(this.btnPrintPairing)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnLaunchCTWPM)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.cboRecentPairings)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.cboVersion)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.btnLookUp)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.txtPairingDate)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.txtPairingID)).EndInit();
@@ -480,6 +507,8 @@ namespace PairingInspect2
         private Telerik.WinControls.UI.RadDateTimePicker txtPairingDate;
         private System.Windows.Forms.Label lblRecentPairings;
         private Telerik.WinControls.UI.RadDropDownList cboRecentPairings;
+        private System.Windows.Forms.Label lblVersion;
+        private Telerik.WinControls.UI.RadDropDownList cboVersion;
         private Telerik.WinControls.UI.RadButton btnLookUp;
         private System.Windows.Forms.Label lblStatusTitle;
         private System.Windows.Forms.Label lblStatusValue;

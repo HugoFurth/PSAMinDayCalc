@@ -117,6 +117,11 @@ namespace PairingInspect2
             SetupLaunchCtwpmButton();
             SetupPrintPairingButton();
             SetupPairingDragDrop();
+
+            // Ver: is mouse-only - keep it (and the editor Telerik hosts inside it) out of the tab order.
+            cboVersion.TabStop = false;
+            foreach (Control c in cboVersion.Controls)
+                c.TabStop = false;
             SetupSecuritySessionTimer();
             cboRecentPairings.VisualListItemFormatting += CboRecentPairings_VisualListItemFormatting;
 
@@ -162,6 +167,84 @@ namespace PairingInspect2
             txtPairingID.Text = entry.Substring(0, spaceIdx);
             txtPairingDate.NullableValue = InternalDateToNullable(entry.Substring(spaceIdx + 1));
             btnLookUp_Click(sender, e);
+        }
+
+        // ---- Ver: dropdown ------------------------------------------------------------
+        // Lists every version CrewTrac has for the looked-up pairing's base (first 5 chars) on
+        // its date: the parent (blank 6th char, shown "-") and A..Z, canceled ones in red.
+        // Look Up fills it and selects the version typed in the ID box; picking another entry
+        // puts base+letter in the ID box and looks that version up. The ID box stays the full
+        // number and can still be typed in.
+        private bool suppressVersionChange;
+        private string versionListBase = "";
+
+        private void RefreshVersionList(string prgID, string internalDate)
+        {
+            suppressVersionChange = true;
+            try
+            {
+                cboVersion.Items.Clear();
+                versionListBase = "";
+                string id = (prgID ?? "").Trim().ToUpperInvariant();
+                if (id.Length < 5 || string.IsNullOrEmpty(internalDate))
+                    return;
+                string base5 = id.Substring(0, 5);
+                string wanted = id.Length >= 6 ? id.Substring(5, 1) : "";
+
+                var versions = new List<KeyValuePair<string, bool>>();   // suffix ("" = parent) -> canceled
+                using (OleDbCommand cmd = prg.Connection.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT Prgid_Prgno_4_6, Cancel FROM PM WHERE Prgid_Prgno_Base = ? AND Prgid_Prgno_Eqpt = ? " +
+                                      "AND Prgid_Prgno_3 = ? AND Prgid_Prgdate = ?";
+                    cmd.Parameters.AddWithValue("b", base5.Substring(0, 1));
+                    cmd.Parameters.AddWithValue("e", base5.Substring(1, 1));
+                    cmd.Parameters.AddWithValue("t", base5.Substring(2, 1));
+                    cmd.Parameters.AddWithValue("d", internalDate);
+                    using (OleDbDataReader r = cmd.ExecuteReader())
+                        while (r.Read())
+                        {
+                            string p46 = (r["Prgid_Prgno_4_6"].ToString().Replace("\0", " ") + "   ").Substring(0, 3);
+                            if (p46.Substring(0, 2) != base5.Substring(3, 2)) continue;
+                            string suffix = p46.Substring(2, 1).Trim();
+                            bool canceled = r["Cancel"].ToString().Trim() == "C";
+                            versions.Add(new KeyValuePair<string, bool>(suffix, canceled));
+                        }
+                }
+                if (versions.Count == 0)
+                    return;
+
+                versionListBase = base5;
+                foreach (var v in versions.OrderBy(v => v.Key == "" ? " " : v.Key))
+                {
+                    var item = new RadListDataItem(v.Key == "" ? "-" : v.Key);
+                    item.Value = v.Key;
+                    if (v.Value) item.ForeColor = Color.Red;
+                    cboVersion.Items.Add(item);
+                    if (v.Key == wanted)
+                        cboVersion.SelectedItem = item;
+                }
+            }
+            catch (Exception ex)
+            {
+                // The version list is a convenience - never let it block the lookup itself.
+                Debug.WriteLine("Version list: " + ex.Message);
+            }
+            finally
+            {
+                suppressVersionChange = false;
+            }
+        }
+
+        private void cboVersion_SelectedIndexChanged(object sender, Telerik.WinControls.UI.Data.PositionChangedEventArgs e)
+        {
+            if (suppressVersionChange || cboVersion.SelectedItem == null || versionListBase.Length != 5)
+                return;
+            string suffix = cboVersion.SelectedItem.Value as string ?? "";
+            string id = versionListBase + suffix;
+            if (id == txtPairingID.Text.Trim().ToUpperInvariant())
+                return;
+            txtPairingID.Text = id;
+            btnLookUp_Click(sender, EventArgs.Empty);
         }
 
         private void AddToRecentList(string pairingID, string pairingDate, Color? statusColor = null)
@@ -931,7 +1014,69 @@ namespace PairingInspect2
                 btnRecalculateMinDay_Click(this, EventArgs.Empty);
                 return true;
                 }
+            if ((keyData == (Keys.Control | Keys.V) || keyData == (Keys.Shift | Keys.Insert)) && TryPastePairing())
+                return true;
             return base.ProcessCmdKey(ref msg, keyData);
+            }
+
+        [DllImport("user32.dll")] private static extern IntPtr GetFocus();
+
+        // Paste = the keyboard twin of drag/drop: Ctrl+V (or Shift+Insert) anywhere that isn't a
+        // text entry looks up the pairing on the clipboard ("PrgID YYYYMMDD", the same shape
+        // TryParsePairingRef takes from a drop - the first line that parses wins, so a pasted
+        // list works), or opens a single copied .json pairing-load file. When a text box, the
+        // date picker or a grid cell editor has focus, the key is left alone so normal pasting
+        // (e.g. just a pairing number into the ID box) still works.
+        private bool TryPastePairing()
+            {
+            Control focused = Control.FromChildHandle(GetFocus());
+            for (Control c = focused; c != null; c = c.Parent)
+                {
+                if (c == this) break;
+                string typeName = c.GetType().Name;
+                if (c is TextBoxBase || typeName.Contains("TextBox") || typeName.Contains("DateTime") ||
+                    typeName.Contains("DropDown") || typeName.Contains("Editor") || typeName.Contains("Spin"))
+                    return false;
+                }
+
+            try
+                {
+                if (Clipboard.ContainsFileDropList())
+                    {
+                    var files = Clipboard.GetFileDropList();
+                    if (files.Count == 1 && IsJsonPairingFile(files[0]))
+                        {
+                        tabMain.SelectedPage = tabPageInspect;
+                        LoadProposedPairingFromJsonFile(files[0]);
+                        return true;
+                        }
+                    }
+
+                if (!Clipboard.ContainsText())
+                    return false;
+
+                string text = Clipboard.GetText();
+                foreach (string line in text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                    {
+                    string prgID;
+                    DateTime? prgDate;
+                    if (TryParsePairingRef(line, out prgID, out prgDate))
+                        {
+                        tabMain.SelectedPage = tabPageInspect;
+                        LookUpParsedPairing(prgID, prgDate.Value);
+                        return true;
+                        }
+                    }
+
+                string shown = text.Length > 80 ? text.Substring(0, 80) + "..." : text;
+                RadMessageBox.Show(this, "The clipboard doesn't hold a pairing.\n\nExpected \"PrgID YYYYMMDD\" (e.g. L7B68 20261116) or \"PrgID MM/DD/YY\".\n\nClipboard: \"" + shown.Trim() + "\"");
+                return true;
+                }
+            catch (Exception ex)   // clipboard locked by another app, etc.
+                {
+                ShowSelectableMessage("Paste", "Couldn't read the clipboard: " + ex.Message);
+                return true;
+                }
             }
 
         private void MinDayProcess_StatusUpdate(object sender, MinDayStatusEventArgs args)
@@ -1068,6 +1213,7 @@ namespace PairingInspect2
             try
             {
                 string internalDate = NullableDateToInternal(txtPairingDate.NullableValue);
+                RefreshVersionList(txtPairingID.Text.Trim(), internalDate);
                 int result = prg.Assemble(txtPairingID.Text.Trim(), internalDate);
                 if (result == 0)
                 {
@@ -2068,6 +2214,25 @@ namespace PairingInspect2
             }
 
             InvalidateAllGridRows();
+            ScrollHighlightedDutyIntoView();
+        }
+
+        // If the highlighted duty's Report row is scrolled out of the main grid, scroll just
+        // enough to show it (EnsureVisible does nothing when the row is already on screen).
+        private void ScrollHighlightedDutyIntoView()
+        {
+            if (highlightedReportDate == null)
+                return;
+            foreach (GridViewRowInfo gr in grid.Rows)
+            {
+                InspectRow ir = gr.DataBoundItem as InspectRow;
+                if (ir != null && ir.RowKind == "Duty" && ir.ReportDateInternal == highlightedReportDate &&
+                    ir.ReportTimeMins == highlightedReportTimeMins)
+                {
+                    gr.EnsureVisible();
+                    return;
+                }
+            }
         }
 
         // Clicking anywhere in the main pairing grid clears whatever PX highlight is
