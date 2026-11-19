@@ -11,6 +11,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using SFIConfigUtils;
 using SFICTDataAccess;
@@ -1151,6 +1152,34 @@ namespace PairingInspect2
             ShowSelectableMessage("Min Day Recalculation Trace", trace);
         }
 
+        // Borderless, non-modal popup shown for the duration of a slow synchronous call
+        // (e.g. CTPairing.Assemble) so the UI doesn't just look frozen. Caller is
+        // responsible for Show()'ing it, forcing a paint (Refresh + DoEvents, since the
+        // blocking call runs on this same UI thread right after), and Close()'ing it
+        // when done -- this only builds the form.
+        private RadForm CreateLoadingSplash(string text)
+        {
+            RadForm splash = new RadForm();
+            splash.ThemeName = RadMessageBox.ThemeName;
+            splash.FormBorderStyle = FormBorderStyle.None;
+            splash.StartPosition = FormStartPosition.CenterParent;
+            splash.ShowInTaskbar = false;
+            splash.Size = new Size(320, 90);
+
+            RadLabel lbl = new RadLabel();
+            lbl.ThemeName = RadMessageBox.ThemeName;
+            lbl.Text = text;
+            lbl.TextAlignment = ContentAlignment.MiddleCenter;
+            // AutoSize defaults to true, which shrinks the label to the text's single-line
+            // height and pins it to the top of the Dock=Fill area, defeating MiddleCenter.
+            lbl.AutoSize = false;
+            lbl.Dock = DockStyle.Fill;
+            lbl.Font = new Font(lbl.Font.FontFamily, 11, FontStyle.Bold);
+
+            splash.Controls.Add(lbl);
+            return splash;
+        }
+
         // Same selectable-text need as ShowMinDayTrace, generalized -- e.g. an exception
         // message or a drag-drop diagnostic the user needs to copy/paste elsewhere, not
         // just read, which RadMessageBox's plain label text doesn't support.
@@ -1228,7 +1257,57 @@ namespace PairingInspect2
             {
                 string internalDate = NullableDateToInternal(txtPairingDate.NullableValue);
                 RefreshVersionList(txtPairingID.Text.Trim(), internalDate);
-                int result = prg.Assemble(txtPairingID.Text.Trim(), internalDate);
+
+                int result = 0;
+                Exception assembleEx = null;
+                Task assembleTask = Task.Run(() =>
+                {
+                    try { result = prg.Assemble(txtPairingID.Text.Trim(), internalDate); }
+                    catch (Exception ex) { assembleEx = ex; }
+                });
+
+                // Assemble is synchronous and, at the client site, can take several
+                // seconds -- without this the UI just looks frozen for that whole time.
+                // Only pop the splash once it's actually running long, not on every
+                // ordinary sub-second lookup. Disabling the form while polling guards
+                // against DoEvents letting the user re-enter this (or another) handler
+                // while prg.Assemble is still running on the background thread.
+                RadForm splash = null;
+                this.Enabled = false;
+                try
+                {
+                    Stopwatch sw = Stopwatch.StartNew();
+                    string loadingText = "Pairing " + txtPairingID.Text.Trim() + " " + FormatMMDD(internalDate) + " loading";
+                    while (!assembleTask.IsCompleted)
+                    {
+                        if (splash == null && sw.ElapsedMilliseconds >= 500)
+                        {
+                            splash = CreateLoadingSplash(loadingText);
+                            splash.Show(this);
+                            // CenterParent only resolves reliably through ShowDialog -- a
+                            // non-modal Show() against an owner leaves it at Windows'
+                            // default placement, so center it against this form's bounds
+                            // explicitly instead.
+                            splash.Location = new Point(
+                                this.Left + (this.Width - splash.Width) / 2,
+                                this.Top + (this.Height - splash.Height) / 2);
+                        }
+                        Application.DoEvents();
+                        System.Threading.Thread.Sleep(20);
+                    }
+                }
+                finally
+                {
+                    this.Enabled = true;
+                    if (splash != null)
+                    {
+                        splash.Close();
+                        splash.Dispose();
+                    }
+                }
+
+                if (assembleEx != null)
+                    throw assembleEx;
                 if (result == 0)
                 {
                     // CTPairing.Assemble only ever sets PrgHdr inside GetPairingHeader,
@@ -1368,7 +1447,7 @@ namespace PairingInspect2
             lblCrewTypeValue.Text = CrewTypeDisplay(hdr.CrewType);
             // Min Day status doesn't apply to a cancelled pairing -- whatever marker
             // happens to be stored is leftover from before cancellation, not current.
-            lblMinDayStatusValue.Text = hdr.Canceled ? "-" : MinDayNameResolver.DisplayName(minDayMarkerStatus) + " (empno=" + hdr.UpdateidUpdempno + ")";
+            lblMinDayStatusValue.Text = hdr.Canceled ? "-" : MinDayNameResolver.DisplayName(minDayMarkerStatus);
             // Red when the marker isn't one of ours -- MinDay has either never considered
             // this pairing, or a real touch since (a dispatcher edit, CrewPost syncing
             // actuals) cleared whatever MinDay marker it had. Totals' LO delta is already
