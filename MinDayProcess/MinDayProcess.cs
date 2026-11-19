@@ -111,21 +111,18 @@ namespace MinDayProcessNS
                 (bps = new CTBidPeriods()).Fill("1001");
                 EvalMS = new EvaluateMS();
                 ctmss = new CTMSs();
-                // Section name is hardcoded, not Assembly.GetExecutingAssembly().GetName().Name --
-                // AssemblyConfig.SetAppConfig looks for a "<AssemblyName>.Properties.Settings"
-                // section in the config at AssemblyLocation. When this code is merged into
-                // PrgInsp.exe (ILRepack, 0PairingInspect2Merge.bat), GetExecutingAssembly()
-                // resolves to PrgInsp.exe itself, not MinDayProcess -- the dynamic name would
-                // look for a nonexistent "PrgInsp.Properties.Settings" section and throw
-                // (confirmed live: "Cannot find 'PrgInsp.Properties.Settings' section in config
-                // file" when invoking Recalculate Min Day from PairingInspect2). The deployed
-                // config's actual section is always named "MinDayProcess.Properties.Settings"
-                // regardless of which exe this code physically ends up inside.
-                SFIConfigUtils.AssemblyConfig.SetAppConfig(Assembly.GetExecutingAssembly().Location, "MinDayProcess");
-                String ExcludeableCodesToLoadProp;
-                if (!SFIConfigUtils.AssemblyConfig.Settings.TryGetValue("ExcludeableCodes", out ExcludeableCodesToLoadProp))
-                    throw new Exception("ExcludeableCodes not set");
-                _ExcludeableCodes = ExcludeableCodesToLoadProp.Split(';');
+                // Read via the same fixed-filename MinDay.config mechanism as the MinDay
+                // marker empnos below, not the entry exe's own .exe.config/.dll.config --
+                // this used to go through AssemblyConfig.SetAppConfig(AssemblyLocation, ...),
+                // which broke when merged into PrgInsp.exe (GetExecutingAssembly() resolves to
+                // PrgInsp.exe itself there, not MinDayProcess, so it went looking for a
+                // nonexistent "PrgInsp.Properties.Settings" section and threw on every
+                // Recalculate Min Day click). MinDay.config has no such assembly-identity
+                // problem since every consumer (PrgInsp.exe, PSAMinDay.exe) reads the exact
+                // same file by a fixed name.
+                // AppSettingRaw throws its own ConfigurationErrorsException (naming the
+                // key and file) if ExcludeableCodes is missing -- no need to re-check here.
+                _ExcludeableCodes = SFIConfigUtils.MinDayConfig.AppSettingRaw("ExcludeableCodes").Split(';');
 
                 // Separate try/catch from the TR09 self-heal below -- so a config
                 // problem (MinDay.config missing/malformed) and a DB problem (can't

@@ -78,27 +78,28 @@ Both steps are saved together as `PairingInspect2\bin\Debug\0PairingInspect2Merg
 
 | File | Purpose | Required for |
 |---|---|---|
-| `PrgInsp.exe.config` | Connection strings + `MinDayProcess.Properties.Settings/ExcludeableCodes` + `PairingInspect2.Properties.Settings` section. Written by step 3's copy, not hand-edited directly. | **required** |
+| `PrgInsp.exe.config` | Connection strings + `PairingInspect2.Properties.Settings` section. Written by step 3's copy, not hand-edited directly. | **required** |
 | `MinDayProcess.MergedVersion.txt` | Written by step 3's PowerShell line. `PrgInsp.exe` reads it at startup to warn if the standalone `MinDayProcess.dll` next to it doesn't match what was merged in — see gotcha #4. | **required** |
-| `MinDay.config` | The 4 MinDay marker empnos (`MINDAY_APPLIED_USER` etc.), read by `MinDayMarkerUsers.GetMinDayUser`. | **required** |
+| `MinDay.config` | The 4 MinDay marker empnos (`MINDAY_APPLIED_USER` etc.), read by `MinDayMarkerUsers.GetMinDayUser`, **plus `ExcludeableCodes`** (moved here from `MinDayProcess.Properties.Settings`/`MinDayProcess.dll.config` — see below). | **required** |
 | `SFI.config` | Read via `SFIConfig.AppSetting("CTEXEDIR")` — needed by every button that launches CTWPM/CTWMS (Inquire, Modify, Evaluate, the exceptions-grid menu, crew-cell double-click). | **required** |
 | `CTSecurityProfile.bin` | Only for unattended callers (`PSAMinDay.exe`). `PrgInsp.exe` runs interactively with a live CT session and never hits this fallback. | PSAMinDay only |
 | `MinDayProcess.json` | The scheduled batch's "last processed" cursor. Single-pairing on-demand calls (Recalculate button) never touch it. | PSAMinDay only |
+| `MinDayProcess.dll.config` | Vestigial since `ExcludeableCodes` moved to `MinDay.config` — nothing reads this file anymore (`SetAppConfig` was its only caller, now removed). Safe to leave in place or drop from future deploys. | unused |
 | `mseval.dll` (loose) | Vestigial from an earlier approach — both deployed binaries now embed their own copy. | unused |
 
-> **TODO, revisit after testing:** `PrgInsp.exe.config` carries three things read through
-> three different mechanisms — (1) connection strings, via `SFICTDataAccess`'s own
-> auto-generated `ApplicationSettingsBase`, hardwired to the entry exe's own `.exe.config`;
-> (2) `ExcludeableCodes`, via `SFIConfigUtils.AssemblyConfig.SetAppConfig`, which *also*
-> opens the entry exe's own config but is custom code, not auto-generated; (3)
+> **Done:** `PrgInsp.exe.config` used to carry three things read through three different
+> mechanisms — (1) connection strings, via `SFICTDataAccess`'s own auto-generated
+> `ApplicationSettingsBase`, hardwired to the entry exe's own `.exe.config`; (2)
+> `ExcludeableCodes`, via `SFIConfigUtils.AssemblyConfig.SetAppConfig`, which *also* opened
+> the entry exe's own config but was custom code, not auto-generated; (3)
 > `PairingInspect2.Properties.Settings` (`LastPairingID`, saved grid layouts), genuinely
-> per-user UI state. Of these, only (2) is a real candidate to move into `SFI.config` or
-> `MinDay.config` instead (same `OpenMappedExeConfiguration`-against-a-fixed-path pattern
-> those already use) — (1) would need changing `SFICTDataAccess`'s own settings mechanism
-> (touches every consumer), and (3) shouldn't move at all since it's per-app state, not
-> shared config. Worth doing once the current merge/deploy approach is proven out — less
-> duplicated config content means less surface area for the kind of config bugs this round
-> of testing already turned up.
+> per-user UI state. (2) has now moved into `MinDay.config` (`SFIConfigUtils.MinDayConfig.AppSettingRaw`,
+> the same fixed-filename mechanism the MinDay marker empnos already used), fixing the
+> duplicated-config problem for every consumer at once (`PrgInsp.exe` and `PSAMinDay.exe`
+> both read the one shared file now instead of each needing its own copy). (1) still needs
+> changing `SFICTDataAccess`'s own settings mechanism to move (touches every consumer), and
+> (3) shouldn't move at all since it's per-app state, not shared config — those two remain
+> as they are.
 
 ## 4b. External prerequisite: native CrewTrac client
 
@@ -182,10 +183,11 @@ regenerated from scratch, it needs:
 - `<configSections>` first, declaring `PairingInspect2.Properties.Settings` (userSettings)
   and `MinDayProcess.Properties.Settings` / `MinDayProcessNS.Properties.Settings` (both
   groups)
-- `<applicationSettings><MinDayProcess.Properties.Settings>` with
-  `ExcludeableCodes = GRS;LFT` — the section must have an actual value, not just be
-  declared
 - `<connectionStrings>` for `SFICTDataAccess.Properties.Settings.*`
+
+(`ExcludeableCodes` used to live here too, under
+`<applicationSettings><MinDayProcess.Properties.Settings>` — it's now read from
+`MinDay.config` instead, see gotcha #2 below, so this template no longer needs it.)
 
 ### 2. AssemblyConfig section lookup breaks when merged
 
